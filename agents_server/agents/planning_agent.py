@@ -11,7 +11,11 @@ class PlanningAgent:
         self.safety_agent = SafetyAgent(llm)
 
     def execute_plan(self, query_embedding, drug_name):
-        enrollment_report = self.enrollment_agent.analyze(query_embedding)
+        # Convert drug_name to a search query for enrollment analysis
+        # Since we're dealing with clinical trials, use the drug_name as the search term
+        enrollment_query = drug_name if drug_name else "cancer clinical trials"
+        
+        enrollment_report = self.enrollment_agent.analyze(enrollment_query)
         efficacy_report = self.efficacy_agent.analyze(drug_name)
         safety_report = self.safety_agent.analyze(drug_name)
 

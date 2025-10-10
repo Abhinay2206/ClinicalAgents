@@ -33,7 +33,7 @@ def create_sample_embedding(dimension=384):
     embedding = embedding / np.linalg.norm(embedding)
     return embedding
 
-def create_breast_cancer_embedding(dimension=384):
+def create_embedding(dimension=384):
     # Use a seed for reproducible results that represent breast cancer characteristics
     np.random.seed(42)
     embedding = np.random.rand(dimension).astype(np.float32)
@@ -89,20 +89,20 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # Patient condition and related treatment
-    patient_condition = "Breast Cancer"
-    treatment_focus = "Breast Cancer Therapies"
+    patient_condition = "diabetes"
+    treatment_focus = "diabetes"
     
     # Create breast cancer-specific query embedding
-    breast_cancer_embedding = create_breast_cancer_embedding()
+    disease_embedding = create_embedding()
     
     print(f"Patient Condition: {patient_condition}")
     print(f"Treatment Focus: {treatment_focus}")
-    print(f"Query embedding dimension: {len(breast_cancer_embedding)}")
+    print(f"Query embedding dimension: {len(disease_embedding)}")
     print("\nAnalyzing suitable clinical trials...")
     print("-" * 60)
-    
+
     # Run the pipeline
-    results = run_pipeline(breast_cancer_embedding, treatment_focus)
+    results = run_pipeline(disease_embedding, treatment_focus)
     
     # Save results to file
     output_file = save_results_to_file(results, patient_condition)

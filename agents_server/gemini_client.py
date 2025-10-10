@@ -2,9 +2,11 @@
 import os
 import google.generativeai as genai
 from typing import Optional
+from dotenv import load_dotenv
 
+load_dotenv()
 class GeminiClient:
-    def __init__(self, model_name: str = "gemini-2.0-flash-exp", api_key: Optional[str] = None):
+    def __init__(self, model_name: str = "gemini-2.0-pro", api_key: Optional[str] = None):
         
         self.api_key = api_key or os.getenv('GEMINI_API_KEY')
         if not self.api_key:
