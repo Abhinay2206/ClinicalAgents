@@ -1,98 +1,121 @@
 # agents/enrollment_agent.py
 import os
-import pickle
-import faiss
+import chromadb
 import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from .base_agent import LLMAgent
 
 class EnrollmentAgent(LLMAgent):
-    def __init__(self, llm, faiss_index_path=None, metadata_pkl_path=None):
+    def __init__(self, llm, collection_name=None, api_key=None, tenant=None, database=None):
         super().__init__("Enrollment", "Analyze patient enrollment data and search clinical trials", llm)
         
-        # Use datasets folder paths if not provided
-        base_path = os.path.join(os.path.dirname(__file__), '..', 'datasets')
-        self.faiss_index_path = faiss_index_path or os.path.join(base_path, 'clinical_trials.faiss')
-        self.metadata_pkl_path = metadata_pkl_path or os.path.join(base_path, 'clinical_trials_metadata.pkl')
+        # ChromaDB connection parameters from environment variables
+        self.collection_name = collection_name or os.getenv('CHROMA_COLLECTION', 'clinical_trials')
+        self.api_key = api_key or os.getenv('CHROMA_API_KEY')
+        self.tenant = tenant or os.getenv('CHROMA_TENANT')
+        self.database = database or os.getenv('CHROMA_DATABASE', 'ClinicalAgents')
+        
+        # Validate required credentials
+        if not self.api_key:
+            raise ValueError("ChromaDB API key not found. Set CHROMA_API_KEY environment variable or pass api_key parameter.")
+        if not self.tenant:
+            raise ValueError("ChromaDB tenant not found. Set CHROMA_TENANT environment variable or pass tenant parameter.")
         
         # Initialize sentence transformer for encoding queries
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
         
-        # Load FAISS index and metadata
-        self.load_data()
+        # Initialize ChromaDB client and collection
+        self.init_chromadb()
     
-    def load_data(self):
-        """Load FAISS index and metadata pickle file"""
+    def init_chromadb(self):
+        """Initialize ChromaDB client and collection"""
         try:
-            # Load FAISS index
-            self.index = faiss.read_index(self.faiss_index_path)
-            print(f"Loaded FAISS index with {self.index.ntotal} vectors")
+            # Initialize ChromaDB cloud client
+            self.client = chromadb.CloudClient(
+                api_key=self.api_key,
+                tenant=self.tenant,
+                database=self.database
+            )
             
-            # Load metadata
-            with open(self.metadata_pkl_path, 'rb') as f:
-                metadata = pickle.load(f)
-                self.documents = metadata.get('documents', [])
-                self.df = metadata.get('df', pd.DataFrame())
+            # Get the collection
+            self.collection = self.client.get_collection(self.collection_name)
             
-            print(f"Loaded metadata for {len(self.documents)} clinical trials")
+            # Get collection stats
+            count = self.collection.count()
+            print(f"Connected to ChromaDB collection '{self.collection_name}' with {count} documents")
             
         except Exception as e:
-            print(f"Error loading data: {e}")
-            self.index = None
-            self.documents = []
-            self.df = pd.DataFrame()
+            print(f"Error connecting to ChromaDB: {e}")
+            self.client = None
+            self.collection = None
     
     def search_by_nct_id(self, nct_id):
         """Search for a specific clinical trial by NCT ID"""
-        if self.df.empty:
+        if not self.collection:
             return None
         
-        # Search for exact NCT ID match
-        matches = self.df[self.df['NCT ID'] == nct_id]
-        if not matches.empty:
-            return matches.iloc[0].to_dict()
-        return None
+        try:
+            # Search ChromaDB for exact NCT ID match
+            results = self.collection.get(
+                where={"nct_id": nct_id}
+            )
+            
+            if results['documents'] and len(results['documents']) > 0:
+                # Return the first match with metadata
+                return {
+                    'document': results['documents'][0],
+                    'metadata': results['metadatas'][0],
+                    'id': results['ids'][0]
+                }
+            return None
+            
+        except Exception as e:
+            print(f"Error searching by NCT ID: {e}")
+            return None
     
     def search_by_disease(self, disease, top_k=10):
         """Search for clinical trials by disease name"""
-        if self.df.empty:
-            return []
-        
-        # Filter by disease (case-insensitive partial match)
-        disease_matches = self.df[self.df['Disease'].str.contains(disease, case=False, na=False)]
-        
-        # Also check conditions column for broader matching
-        condition_matches = self.df[self.df['Conditions'].str.contains(disease, case=False, na=False)]
-        
-        # Combine and remove duplicates
-        all_matches = pd.concat([disease_matches, condition_matches]).drop_duplicates()
-        
-        return all_matches.head(top_k).to_dict('records')
-    
-    def semantic_search(self, query, top_k=5):
-        """Perform semantic search using FAISS index"""
-        if self.index is None or len(self.documents) == 0:
+        if not self.collection:
             return []
         
         try:
-            # Encode the query
+            # Search ChromaDB using semantic search since metadata filtering is complex
+            # ChromaDB's where clause has limited string matching capabilities
+            return self.semantic_search(f"{disease} disease condition clinical trial", top_k)
+            
+        except Exception as e:
+            print(f"Error searching by disease: {e}")
+            # Fallback to semantic search if metadata filtering fails
+            return self.semantic_search(disease, top_k)
+    
+    def semantic_search(self, query, top_k=5):
+        """Perform semantic search using ChromaDB"""
+        if not self.collection:
+            return []
+        
+        try:
+            # Encode the query using the same model as used for indexing
             query_embedding = self.model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
             
-            # Search FAISS index
-            scores, indices = self.index.search(query_embedding, top_k)
+            # Search ChromaDB collection
+            results = self.collection.query(
+                query_embeddings=query_embedding.tolist(),
+                n_results=top_k
+            )
             
-            # Get results with similarity scores
-            results = []
-            for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
-                if idx < len(self.df):
-                    trial_data = self.df.iloc[idx].to_dict()
-                    trial_data['similarity_score'] = float(score)
-                    trial_data['rank'] = i + 1
-                    trial_data['document_text'] = self.documents[idx]
-                    results.append(trial_data)
+            # Format results with similarity scores (distances)
+            formatted_results = []
+            for i in range(len(results['documents'][0])):
+                formatted_results.append({
+                    'document': results['documents'][0][i],
+                    'metadata': results['metadatas'][0][i],
+                    'id': results['ids'][0][i],
+                    'similarity_score': 1 - results['distances'][0][i],  # Convert distance to similarity
+                    'rank': i + 1
+                })
             
-            return results
+            return formatted_results
             
         except Exception as e:
             print(f"Error in semantic search: {e}")
@@ -140,15 +163,16 @@ class EnrollmentAgent(LLMAgent):
         # Prepare trial summaries for analysis
         trial_summaries = []
         for i, trial in enumerate(trials, 1):
+            metadata = trial.get('metadata', {})
             summary = f"""
-            Trial {i} (NCT ID: {trial.get('NCT ID', 'N/A')}):
-            - Disease: {trial.get('Disease', 'N/A')}
-            - Status: {trial.get('Overall Status', 'N/A')}
-            - Phase: {trial.get('Phase', 'N/A')}
-            - Study Type: {trial.get('Study Type', 'N/A')}
-            - Conditions: {trial.get('Conditions', 'N/A')}
-            - Why Stopped: {trial.get('Why Stopped', 'N/A')}
-            - Eligibility Criteria: {trial.get('Eligibility Criteria', 'N/A')[:500]}...
+            Trial {i} (NCT ID: {metadata.get('nct_id', 'N/A')}):
+            - Disease: {metadata.get('disease', 'N/A')}
+            - Status: {metadata.get('status', 'N/A')}
+            - Phase: {metadata.get('phase', 'N/A')}
+            - Study Type: {metadata.get('study_type', 'N/A')}
+            - Conditions: {metadata.get('conditions', 'N/A')}
+            - Why Stopped: {metadata.get('why_stopped', 'N/A')}
+            - Eligibility Criteria: {metadata.get('eligibility_criteria', 'N/A')[:500]}...
             """
             if 'similarity_score' in trial:
                 summary += f"\n            - Similarity Score: {trial.get('similarity_score', 0):.3f}"
@@ -198,18 +222,22 @@ class EnrollmentAgent(LLMAgent):
         if not trial:
             return f"Trial with NCT ID '{nct_id}' not found in the database."
         
+        metadata = trial.get('metadata', {})
         details = f"""
-        **Clinical Trial Details - {trial.get('NCT ID', 'N/A')}**
+        **Clinical Trial Details - {metadata.get('nct_id', 'N/A')}**
         
-        - **Disease/Condition:** {trial.get('Disease', 'N/A')}
-        - **Overall Status:** {trial.get('Overall Status', 'N/A')}
-        - **Phase:** {trial.get('Phase', 'N/A')}
-        - **Study Type:** {trial.get('Study Type', 'N/A')}
-        - **Conditions:** {trial.get('Conditions', 'N/A')}
-        - **Why Stopped:** {trial.get('Why Stopped', 'N/A')}
+        - **Disease/Condition:** {metadata.get('disease', 'N/A')}
+        - **Overall Status:** {metadata.get('status', 'N/A')}
+        - **Phase:** {metadata.get('phase', 'N/A')}
+        - **Study Type:** {metadata.get('study_type', 'N/A')}
+        - **Conditions:** {metadata.get('conditions', 'N/A')}
+        - **Why Stopped:** {metadata.get('why_stopped', 'N/A')}
         
         **Eligibility Criteria:**
-        {trial.get('Eligibility Criteria', 'N/A')}
+        {metadata.get('eligibility_criteria', 'N/A')}
+        
+        **Document Text:**
+        {trial.get('document', 'N/A')}
         """
         
         return details
