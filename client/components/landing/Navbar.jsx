@@ -1,25 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Sparkles, Moon, Sun } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import PageTransition from './PageTransition';
 
 export default function Navbar() {
-  const [isDark, setIsDark] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const savedTheme = localStorage.getItem('theme');
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const shouldBeDark = savedTheme === 'dark' || (!savedTheme && prefersDark);
-      if (shouldBeDark) {
-        document.documentElement.classList.add('dark');
-      }
-      return shouldBeDark;
-    }
-    return false;
-  });
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -30,12 +18,6 @@ export default function Navbar() {
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-
-  const toggleDarkMode = () => {
-    setIsDark(!isDark);
-    document.documentElement.classList.toggle('dark');
-    localStorage.setItem('theme', !isDark ? 'dark' : 'light');
-  };
 
   return (
     <motion.nav
@@ -84,19 +66,6 @@ export default function Navbar() {
 
           {/* Actions */}
           <div className="flex items-center gap-3">
-            {/* Dark Mode Toggle */}
-            <button
-              onClick={toggleDarkMode}
-              className="p-2 rounded-lg hover:bg-[var(--bg-secondary)] transition-all"
-              title="Toggle Theme"
-            >
-              {isDark ? (
-                <Sun className="w-5 h-5 text-[var(--accent-teal)]" />
-              ) : (
-                <Moon className="w-5 h-5 text-[var(--text-secondary)]" />
-              )}
-            </button>
-
             {/* CTA Button with Transition */}
             <PageTransition href="/chat">
               <Button size="sm" className="hidden sm:inline-flex">
