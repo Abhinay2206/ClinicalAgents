@@ -4,6 +4,7 @@ import os
 from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -20,6 +21,15 @@ class ChatRequest(BaseModel):
 
 load_dotenv()
 app = FastAPI(title="ClinicalAgents API", version="0.1.0")
+
+# Enable CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _new_proxy(session_id: Optional[str] = None) -> HumanProxyAgent:
