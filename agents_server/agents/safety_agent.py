@@ -10,18 +10,29 @@ class SafetyAgent(LLMAgent):
 
     def fetch_safety_data(self, drug_name, limit=1):
         """Fetch safety data for a specific drug"""
+        # Clean the drug name for better API search
+        clean_drug_name = drug_name.strip().lower()
+        
         params = {
-            'search': f'openfda.generic_name:"{drug_name}" OR openfda.brand_name:"{drug_name}"',
+            'search': f'openfda.generic_name:"{clean_drug_name}" OR openfda.brand_name:"{clean_drug_name}"',
             'limit': limit
         }
         
         try:
             response = requests.get(self.base_url, params=params)
+            print(f"FDA API Request URL: {response.url}")
+            
             if response.status_code == 200:
                 data = response.json()
-                return data.get("results", [])
+                results = data.get("results", [])
+                print(f"FDA API returned {len(results)} results for '{drug_name}'")
+                return results
+            elif response.status_code == 404:
+                print(f"FDA API: No data found for drug '{drug_name}'")
+                return []
             else:
                 print(f"FDA API request failed with status code: {response.status_code}")
+                print(f"Response: {response.text[:200]}...")
                 return []
         except Exception as e:
             print(f"Error fetching FDA data: {e}")
@@ -51,7 +62,35 @@ class SafetyAgent(LLMAgent):
         data = self.fetch_safety_data(drug_name)
         
         if not data:
-            return f"No FDA label data found for {drug_name}. Unable to perform safety analysis."
+            # Provide general safety analysis when FDA data is not available
+            prompt = f"""
+            You are a clinical safety expert providing information to patients and healthcare professionals.
+            Provide a general safety assessment for {drug_name} based on established medical knowledge.
+            
+            Structure your response in TWO sections:
+            
+            **PATIENT-FRIENDLY SUMMARY** (Write in simple, clear language):
+            - Explain the main safety concerns in plain terms
+            - List the most common side effects patients should know about
+            - Mention who should NOT take this medication (contraindications)
+            - Note any serious warnings (if applicable)
+            - Provide simple safety tips
+            - Keep it brief (3-4 paragraphs)
+            
+            **DETAILED TECHNICAL ANALYSIS**:
+            1. **Common Safety Profile**: General safety considerations and contraindications
+            2. **Typical Side Effects**: Most commonly reported adverse reactions with frequencies
+            3. **Special Populations**: Safety considerations for elderly, pregnant women, children
+            4. **Drug Interactions**: Major classes of medications that may interact
+            5. **Monitoring Requirements**: What parameters should be monitored during treatment
+            6. **Risk Factors**: Patient conditions that may increase risk
+            7. **Risk Mitigation Strategies**: How to minimize adverse events
+            
+            Note: This analysis is based on general medical knowledge. For specific safety information, consult FDA-approved labeling and clinical guidelines.
+            
+            Always start with the PATIENT-FRIENDLY SUMMARY first.
+            """
+            return self.run(prompt)
         
         # Extract relevant safety information from FDA labels
         safety_info = []
@@ -69,19 +108,33 @@ class SafetyAgent(LLMAgent):
             safety_info.append(info)
         
         prompt = f"""
+        You are a clinical safety expert providing information to patients and healthcare professionals.
         Analyze the following FDA drug label safety information for {drug_name}:
         
         {safety_info}
         
-        Please provide a comprehensive safety analysis covering:
-        1. Black box warnings (if any)
-        2. Major contraindications
-        3. Common adverse reactions and their frequencies
-        4. Significant drug interactions
-        5. Special precautions and populations at risk
-        6. Overall risk assessment and recommendations
+        Structure your response in TWO sections:
         
-        Focus on clinically relevant safety concerns and risk mitigation strategies.
+        **PATIENT-FRIENDLY SUMMARY** (Write in simple, clear language):
+        - Start with the most critical safety information (black box warnings if present)
+        - List common side effects in order of importance
+        - Explain who should avoid this medication
+        - Mention important drug interactions in plain language
+        - Provide practical safety advice
+        - Keep it concise (3-4 paragraphs)
+        
+        **DETAILED TECHNICAL ANALYSIS**:
+        1. Black box warnings (if any) - most serious warnings
+        2. Major contraindications - when NOT to use
+        3. Common adverse reactions and their frequencies
+        4. Significant drug interactions with mechanisms
+        5. Special precautions and populations at risk
+        6. Monitoring requirements and parameters
+        7. Overall risk assessment and recommendations
+        8. Risk mitigation strategies
+        
+        Focus on clinically relevant safety concerns and actionable guidance.
+        Always start with the PATIENT-FRIENDLY SUMMARY first.
         """
         
         return self.run(prompt)

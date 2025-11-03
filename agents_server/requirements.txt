@@ -9,3 +9,10 @@ python-dotenv
 google-generativeai
 requests
 chromadb
+pyautogen
+openai
+motor
+tenacity
+pydantic
+fastapi
+uvicorn

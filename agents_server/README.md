@@ -6,7 +6,7 @@ A multi-agent system for clinical trial analysis using Google's Gemini 2.5 Flash
 
 This system consists of four specialized agents:
 
-1. **Enrollment Agent**: Analyzes patient enrollment patterns using FAISS similarity search on clinical trials data
+1. **Enrollment Agent**: Analyzes patient enrollment patterns using ChromaDB (when configured) or a local FAISS index + CSV fallback on clinical trials data
 2. **Efficacy Agent**: Analyzes treatment outcomes using Neo4j graph database
 3. **Safety Agent**: Analyzes drug safety data using FDA API
 4. **Planning Agent**: Coordinates all agents and synthesizes results
@@ -38,13 +38,20 @@ GEMINI_API_KEY=your_gemini_api_key_here
 NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=your-password-here
+
+# MongoDB (optional, recommended for memory & audit logs)
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DB=ClinicalAgents
+
+# Enable HumanProxyAgent (routes through Reasoner -> Reviewer -> Output)
+USE_PROXY=1
 ```
 
 ### 3. Data Files
 
-Ensure the following files exist in the `datasets/` folder:
-- `clinical_trials.faiss` - FAISS index for enrollment analysis
-- `clinical_trials_metadata.pkl` - Metadata for clinical trials
+Local fallback for Enrollment Agent expects the following in `datasets/`:
+- `clinical_trials.faiss` - FAISS index for enrollment analysis (optional; if missing, a transient index will be built from CSV)
+- `clinical_trials.csv` - Clinical trials metadata (used to build prompts and to build a transient index when needed)
 
 ## Usage
 
@@ -71,6 +78,38 @@ print("Sub-reports:", results["sub_reports"])
 python main.py
 ```
 
+### Chatbot with Memory, Review, and Replay
+
+```bash
+python chatbot.py
+```
+
+Interactive commands:
+- `session` — show current session id
+- `session new` — start a new session
+- `replay [<session_id>]` — print audit events for the session (requires MongoDB)
+
+### REST API (FastAPI)
+
+Start the API:
+
+```bash
+uvicorn agents_server.api:app --reload --port 8000
+```
+
+Endpoints:
+- `POST /chat` body `{ "prompt": "...", "session_id": "optional" }`
+- `GET /history/{session_id}`
+- `GET /replay/{session_id}`
+
+### Snapshot cadence
+
+Control how often snapshots are written with `SNAPSHOT_EVERY` (default `1` — every turn). Set in `.env`:
+
+```bash
+SNAPSHOT_EVERY=3
+```
+
 ### Test Individual Agents
 
 ```bash
@@ -80,14 +119,15 @@ python test_agents.py
 ## Agent Details
 
 ### Enrollment Agent
-- Uses FAISS index to find similar clinical trials
+- Uses ChromaDB Cloud to find similar clinical trials when `CHROMA_*` env vars are set
+- Falls back to a local FAISS index and `clinical_trials.csv` if Chroma is not configured
 - Analyzes enrollment patterns and provides recruitment recommendations
-- Data source: `datasets/clinical_trials.faiss` and `datasets/clinical_trials_metadata.pkl`
+- Data source: `datasets/clinical_trials.faiss` and `datasets/clinical_trials.csv` (or a transient FAISS index built at runtime)
 
 ### Efficacy Agent
-- Connects to Neo4j graph database using environment variables
-- Analyzes treatment outcomes and efficacy metrics
-- Requires: NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD environment variables
+- Connects to Neo4j graph database using environment variables when available
+- If Neo4j is not configured, performs a general LLM-based efficacy analysis
+- Environment variables (optional but recommended): NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
 
 ### Safety Agent
 - Uses FDA Drug Label API: `https://api.fda.gov/drug/label.json`
@@ -98,6 +138,11 @@ python test_agents.py
 - Coordinates all three specialist agents
 - Synthesizes results into comprehensive analysis
 - Uses Gemini 2.5 Flash for final reasoning
+
+### Human Proxy, Reasoner, and Reviewer
+- **HumanProxyAgent**: main interface; persists chat memory and audit logs in MongoDB; routes to agents and applies review gate before final output; supports replay.
+- **ReasonerAgent**: produces structured output with `answer`, concise `steps`, `citations`, `used_agents`, and `confidence`.
+- **ReviewerAgent**: validates accuracy, clarity, and consistency; can request revision or approve.
 
 ## API Requirements
 
@@ -138,9 +183,9 @@ agents_server/
 ## Troubleshooting
 
 1. **Import Errors**: Run `pip install -r requirements.txt`
-2. **Gemini API Errors**: Check your `GEMINI_API_KEY` in `.env`
-3. **Neo4j Errors**: Verify database credentials and connectivity
-4. **FAISS Errors**: Ensure `datasets/clinical_trials.faiss` and `datasets/clinical_trials_metadata.pkl` exist
+2. **Gemini API Errors**: Check your `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) in `.env`
+3. **Neo4j Optional**: If not set, EfficacyAgent will still run with general analysis
+4. **Enrollment Fallback**: If ChromaDB is not configured, the system will use local `datasets/clinical_trials.csv` and `datasets/clinical_trials.faiss` (or build a transient index)
 5. **FDA API Errors**: Check internet connectivity (no API key needed)
 
 ## Model Information
