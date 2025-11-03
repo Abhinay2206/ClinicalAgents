@@ -31,12 +31,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global singletons for performance - initialized once at startup
+_llm_client: Optional[GeminiClient] = None
+_mongo_store: Optional[AsyncMongoStore] = None
+_orchestrator: Optional[SimpleDynamicOrchestrator] = None
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize expensive resources once at startup"""
+    global _llm_client, _mongo_store, _orchestrator
+    print("🚀 Initializing application resources...")
+    
+    # Initialize LLM client (lightweight)
+    _llm_client = GeminiClient(model_name="gemini-2.5-flash")
+    print("✓ LLM client initialized")
+    
+    # Initialize MongoDB store (connection pool)
+    _mongo_store = AsyncMongoStore()
+    print("✓ MongoDB store initialized")
+    
+    # Initialize orchestrator with all agents (heavy - do once)
+    _orchestrator = SimpleDynamicOrchestrator(_llm_client)
+    print("✓ Orchestrator and agents initialized")
+    print("🎉 Application ready!")
+
 
 def _new_proxy(session_id: Optional[str] = None) -> HumanProxyAgent:
-    llm = GeminiClient(model_name="gemini-2.5-flash")
-    store = AsyncMongoStore()
-    orchestrator = SimpleDynamicOrchestrator(llm)
-    return HumanProxyAgent(llm, store=store, orchestrator=orchestrator, session_id=session_id)
+    """Create a lightweight proxy using shared resources"""
+    return HumanProxyAgent(
+        llm=_llm_client,
+        store=_mongo_store,
+        orchestrator=_orchestrator,
+        session_id=session_id
+    )
 
 
 @app.get("/health")

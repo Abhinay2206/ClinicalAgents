@@ -19,51 +19,62 @@ class SimpleDynamicOrchestrator:
     based on user prompts using keyword analysis and intent detection.
     """
     
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, verbose: bool = False):
         self.llm = llm or GeminiClient(model_name="gemini-2.5-flash")
+        self.verbose = verbose
         
         # Track available agents regardless of individual init failures
         self.agents_available: List[str] = []
         
-        # Initialize all available agents
+        # Initialize all available agents with suppressed output unless verbose
         try:
             self.enrollment_agent = EnrollmentAgent(self.llm)
             self.agents_available.append("enrollment")
-            print("✓ Enrollment agent initialized")
+            if self.verbose:
+                print("✓ Enrollment agent initialized")
         except Exception as e:
-            print(f"⚠ Enrollment agent failed to initialize: {e}")
+            if self.verbose:
+                print(f"⚠ Enrollment agent failed to initialize: {e}")
             self.enrollment_agent = None
         
         try:
             self.efficacy_agent = EfficacyAgent(self.llm)
             self.agents_available.append("efficacy")
-            print("✓ Efficacy agent initialized")
+            if self.verbose:
+                print("✓ Efficacy agent initialized")
         except Exception as e:
-            print(f"⚠ Efficacy agent failed to initialize: {e}")
+            if self.verbose:
+                print(f"⚠ Efficacy agent failed to initialize: {e}")
             self.efficacy_agent = None
         
         try:
             self.safety_agent = SafetyAgent(self.llm)
             self.agents_available.append("safety")
-            print("✓ Safety agent initialized")
+            if self.verbose:
+                print("✓ Safety agent initialized")
         except Exception as e:
-            print(f"⚠ Safety agent failed to initialize: {e}")
+            if self.verbose:
+                print(f"⚠ Safety agent failed to initialize: {e}")
             self.safety_agent = None
         
         try:
             self.reasoning_agent = ReasoningAgent(self.llm)
-            print("✓ Reasoning agent initialized")
+            if self.verbose:
+                print("✓ Reasoning agent initialized")
         except Exception as e:
-            print(f"⚠ Reasoning agent failed to initialize: {e}")
+            if self.verbose:
+                print(f"⚠ Reasoning agent failed to initialize: {e}")
             self.reasoning_agent = None
         
         # General fallback agent (always available)
         try:
             self.general_agent = GeneralAgent(self.llm)
             self.agents_available.append("general")
-            print("✓ General agent initialized")
+            if self.verbose:
+                print("✓ General agent initialized")
         except Exception as e:
-            print(f"⚠ General agent failed to initialize: {e}")
+            if self.verbose:
+                print(f"⚠ General agent failed to initialize: {e}")
             self.general_agent = None
         
         # Agent capabilities mapping
@@ -137,17 +148,13 @@ class SimpleDynamicOrchestrator:
         has_disease_mention = any(disease in query_lower for disease in disease_keywords)
         has_severity_mention = any(severity in query_lower for severity in severity_indicators)
         
+        # Only boost agents if they already have some relevance (don't force-activate all)
         if has_disease_mention or has_severity_mention:
-            print(f"Detected disease/severity context - ensuring efficacy and safety agents are activated")
-            # Ensure efficacy and safety agents are included for disease-related queries
-            if "efficacy" in self.agents_available:
-                agent_scores["efficacy"] = agent_scores.get("efficacy", 0) + 5
-            if "safety" in self.agents_available:
-                agent_scores["safety"] = agent_scores.get("safety", 0) + 5
-            # Also include enrollment for comprehensive analysis
-            if "enrollment" in self.agents_available:
-                # Boost enrollment equally so it isn't filtered out later
-                agent_scores["enrollment"] = agent_scores.get("enrollment", 0) + 5
+            # Small boost for agents that already matched keywords
+            if "efficacy" in agent_scores and agent_scores["efficacy"] > 0:
+                agent_scores["efficacy"] = agent_scores.get("efficacy", 0) + 2
+            if "safety" in agent_scores and agent_scores["safety"] > 0:
+                agent_scores["safety"] = agent_scores.get("safety", 0) + 2
         
         # 2. Prioritize efficacy for treatment/therapy success queries
         treatment_success_indicators = [
@@ -162,25 +169,25 @@ class SimpleDynamicOrchestrator:
         # Context-aware disambiguation for "success" queries
         # If query mentions "success rate" with trial/enrollment context, it's about enrollment
         enrollment_success_indicators = [
-            "success rate of trial", "trial success rate", "success rate for trial",
-            "enrollment success", "recruitment success", "chances of enrollment",
-            "probability of enrollment", "success rate of enrollment"
+            "success rate", "trial success", "enrollment success", "recruitment success",
+            "chances of enrollment", "probability of enrollment", "how many enrolled",
+            "enrollment ratio", "recruitment rate"
         ]
         if any(indicator in query_lower for indicator in enrollment_success_indicators):
-            print("Detected enrollment success rate query - prioritizing enrollment agent")
             # Boost enrollment score significantly
-            if "enrollment" in agent_scores:
-                agent_scores["enrollment"] += 10
-            else:
-                agent_scores["enrollment"] = 10
-            # Reduce efficacy score if it was triggered by generic "success"
-            if "efficacy" in agent_scores and "treatment" not in query_lower and "drug" not in query_lower:
-                agent_scores["efficacy"] = max(0, agent_scores["efficacy"] - 5)
+            if "enrollment" in self.agents_available:
+                agent_scores["enrollment"] = agent_scores.get("enrollment", 0) + 15
+            # Clear out other agents unless they have strong matches
+            agents_to_keep = {}
+            for agent, score in agent_scores.items():
+                if agent == "enrollment" or score >= 5:
+                    agents_to_keep[agent] = score
+            agent_scores = agents_to_keep
         
-        # If asking about a specific NCT trial without specific focus, activate all agents
-        if re.search(r'NCT\d{8}', query, re.IGNORECASE) and len(agent_scores) <= 1:
-            print("Detected NCT ID - activating comprehensive analysis")
-            agent_scores = {agent: 1 for agent in self.agents_available}
+        # If asking about a specific NCT trial, prioritize enrollment for lookup
+        if re.search(r'NCT\d{8}', query, re.IGNORECASE):
+            if "enrollment" in self.agents_available:
+                agent_scores["enrollment"] = agent_scores.get("enrollment", 0) + 10
 
         # If query suggests looking up a specific trial, strongly prioritize enrollment
         lookup_indicators = ["nct", "specific trial", "lookup", "look up", "find trial", "trial details", "study id"]
@@ -188,39 +195,23 @@ class SimpleDynamicOrchestrator:
             if "enrollment" in self.agents_available:
                 agent_scores["enrollment"] = agent_scores.get("enrollment", 0) + 10
         
-        # 3. If there's general clinical context and only one or zero agents, activate all
-        clinical_keywords = ["clinical trial", "study", "trial", "drug", "treatment", "therapy", "medicine", "medication"]
-        has_clinical_context = any(keyword in query_lower for keyword in clinical_keywords)
-        
-        if has_clinical_context and len(agent_scores) <= 1:
-            print("Detected general clinical context with few agents - activating all available agents")
-            agent_scores = {agent: max(agent_scores.get(agent, 0), 3) for agent in self.agents_available}
-        
-        # If multiple agents have similar scores, include all high-scoring ones
+        # Keep only top scoring agents (avoid activating everything)
         if len(agent_scores) > 1:
             max_score = max(agent_scores.values())
-            high_scoring_agents = [agent for agent, score in agent_scores.items() if score >= max_score * 0.7]
+            # Only keep agents with score >= 70% of max OR >= 5 absolute points
+            high_scoring_agents = [
+                agent for agent, score in agent_scores.items() 
+                if score >= max_score * 0.7 or score >= 5
+            ]
             agent_scores = {agent: agent_scores[agent] for agent in high_scoring_agents}
-            # Ensure enrollment is kept for disease/clinical contexts
-            if (has_disease_mention or has_clinical_context) and "enrollment" in self.agents_available:
-                agent_scores.setdefault("enrollment", 3)
         
-        # 4. If disease condition exists but few agents activated, ensure comprehensive coverage
-        if has_disease_mention and len(agent_scores) <= 1:
-            print("Disease detected with minimal agents - activating comprehensive analysis")
-            # Activate all available agents for disease-related queries
-            for agent in self.agents_available:
-                if agent not in agent_scores:
-                    agent_scores[agent] = 2
-        
-        # Default to all agents if no clear intent but has medical context
+        # Default to general agent if no clear intent
         if not agent_scores:
-            if has_disease_mention or has_clinical_context:
-                print("Medical context detected - activating all available agents")
-                agent_scores = {agent: 1 for agent in self.agents_available}
-            elif self.general_agent:
-                print("No clear intent detected - defaulting to general agent")
+            if self.general_agent:
                 agent_scores = {"general": 1}
+            elif self.agents_available:
+                # Fallback: use first available agent
+                agent_scores = {self.agents_available[0]: 1}
         
         # Determine coordination strategy
         coordination_strategy = "parallel" if len(agent_scores) > 1 else "single"

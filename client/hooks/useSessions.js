@@ -36,7 +36,7 @@ export function useSessions() {
   const initializeDefaultSession = () => {
     const defaultSession = {
       id: generateId(),
-      title: 'New Conversation',
+      title: 'New Chat',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -47,7 +47,7 @@ export function useSessions() {
   const createNewSession = useCallback(() => {
     const newSession = {
       id: generateId(),
-      title: 'New Conversation',
+      title: 'New Chat',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -72,7 +72,7 @@ export function useSessions() {
           // Create a new session if all deleted
           const newSession = {
             id: generateId(),
-            title: 'New Conversation',
+            title: 'New Chat',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };

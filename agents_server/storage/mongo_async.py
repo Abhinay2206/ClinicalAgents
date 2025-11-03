@@ -29,11 +29,12 @@ else:
 
 class AsyncMongoStore:
     def __init__(self, uri: Optional[str] = None, db_name: Optional[str] = None):
-        self._uri = uri or os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
+        self._uri = uri or os.getenv("MONGODB_URI")
         self._db_name = db_name or os.getenv("MONGODB_DB") or "ClinicalAgents"
         self._client: Optional[Any] = None
         self._db: Optional[Any] = None
         self._lock = asyncio.Lock()
+        self._indexes_created = False
 
     async def _ensure_connected(self):
         if (self._client is not None) and (self._db is not None):
@@ -45,11 +46,25 @@ class AsyncMongoStore:
                 from motor.motor_asyncio import AsyncIOMotorClient as _Client  # type: ignore
             except Exception as _e:  # pragma: no cover
                 raise RuntimeError("motor is not installed. Add 'motor' to requirements.txt and install it.")
-            self._client = _Client(self._uri, serverSelectionTimeoutMS=5000)
-            # Trigger a ping to verify connection
-            await self._client.admin.command("ping")
+            # Reduced timeout and connection pooling
+            self._client = _Client(
+                self._uri,
+                serverSelectionTimeoutMS=2000,  # Reduced from 5s to 2s
+                connectTimeoutMS=2000,
+                socketTimeoutMS=5000,
+                maxPoolSize=10,
+                minPoolSize=1
+            )
+            # Trigger a ping to verify connection with timeout
+            try:
+                await asyncio.wait_for(self._client.admin.command("ping"), timeout=2.0)
+            except asyncio.TimeoutError:
+                raise RuntimeError("MongoDB connection timeout - is MongoDB running?")
             self._db = self._client[self._db_name]
-            await self._ensure_indexes()
+            # Only create indexes once
+            if not self._indexes_created:
+                await self._ensure_indexes()
+                self._indexes_created = True
 
     async def _ensure_indexes(self):
         assert self._db is not None
@@ -81,7 +96,14 @@ class AsyncMongoStore:
         await self._ensure_connected()
         assert self._db is not None
         cursor = self._db["chat_memory"].find({"session_id": session_id}).sort("timestamp", 1)
-        return [doc async for doc in cursor]
+        docs = [doc async for doc in cursor]
+        # Convert ObjectId and datetime to string for JSON serialization
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        return docs
 
     # ---------- Audit Logs ----------
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
@@ -104,7 +126,14 @@ class AsyncMongoStore:
         await self._ensure_connected()
         assert self._db is not None
         cursor = self._db["audit_logs"].find({"session_id": session_id}).sort("timestamp", 1)
-        return [doc async for doc in cursor]
+        docs = [doc async for doc in cursor]
+        # Convert ObjectId and datetime to string for JSON serialization
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        return docs
 
     # ---------- Backups ----------
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)

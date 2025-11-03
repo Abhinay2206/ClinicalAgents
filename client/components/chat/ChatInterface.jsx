@@ -8,8 +8,8 @@ import { useSessions } from '@/hooks/useSessions';
 
 export default function ChatInterface() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const { sessions, currentSessionId, createNewSession, switchSession, deleteSession } = useSessions();
-  const { messages, isLoading, error, sendMessage, clearMessages } = useChat(currentSessionId);
+  const { sessions, currentSessionId, createNewSession, switchSession, deleteSession, updateSessionTitle } = useSessions();
+  const { messages, isLoading, error, sendMessage, clearMessages } = useChat(currentSessionId, updateSessionTitle);
 
   const handleNewChat = () => {
     const newSessionId = createNewSession();

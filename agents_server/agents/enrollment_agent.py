@@ -10,8 +10,14 @@ from sentence_transformers import SentenceTransformer
 from .base_agent import LLMAgent
 
 class EnrollmentAgent(LLMAgent):
-    def __init__(self, llm, collection_name=None, api_key=None, tenant=None, database=None):
+    # Class-level cache for shared resources
+    _model_cache = None
+    _faiss_cache = {}
+    
+    def __init__(self, llm, collection_name=None, api_key=None, tenant=None, database=None, verbose: bool = False):
         super().__init__("Enrollment", "Analyze patient enrollment data and search clinical trials", llm)
+        
+        self.verbose = verbose
         
         # ChromaDB connection parameters from environment variables
         self.collection_name = collection_name or os.getenv('CHROMA_COLLECTION', 'clinical_trials')
@@ -19,8 +25,10 @@ class EnrollmentAgent(LLMAgent):
         self.tenant = tenant or os.getenv('CHROMA_TENANT')
         self.database = database or os.getenv('CHROMA_DATABASE', 'ClinicalAgents')
         
-        # Initialize sentence transformer for encoding queries
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
+        # Use cached sentence transformer (expensive to load)
+        if EnrollmentAgent._model_cache is None:
+            EnrollmentAgent._model_cache = SentenceTransformer("all-MiniLM-L6-v2")
+        self.model = EnrollmentAgent._model_cache
         
         # Backends
         self.client = None
@@ -36,7 +44,8 @@ class EnrollmentAgent(LLMAgent):
             if not self.collection:
                 self.init_faiss()
         else:
-            print("ChromaDB credentials not found. Falling back to local FAISS/CSV search.")
+            if self.verbose:
+                print("ChromaDB credentials not found. Falling back to local FAISS/CSV search.")
             self.init_faiss()
     
     def init_chromadb(self):
@@ -53,18 +62,32 @@ class EnrollmentAgent(LLMAgent):
             self.collection = self.client.get_collection(self.collection_name)
             
             # Get collection stats
-            count = self.collection.count()
-            print(f"Connected to ChromaDB collection '{self.collection_name}' with {count} documents")
+            if self.verbose:
+                count = self.collection.count()
+                print(f"Connected to ChromaDB collection '{self.collection_name}' with {count} documents")
             
         except Exception as e:
-            print(f"Error connecting to ChromaDB: {e}")
+            if self.verbose:
+                print(f"Error connecting to ChromaDB: {e}")
             self.client = None
             self.collection = None
 
     def init_faiss(self):
-        """Initialize FAISS index and load trial metadata from local datasets"""
+        """Initialize FAISS index and load trial metadata from local datasets with caching"""
         try:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            
+            # Check if we have cached FAISS data
+            cache_key = f"{base_dir}_faiss"
+            if cache_key in EnrollmentAgent._faiss_cache:
+                cached = EnrollmentAgent._faiss_cache[cache_key]
+                self.faiss_index = cached.get('index')
+                self.faiss_documents = cached.get('documents', [])
+                self.faiss_df = cached.get('df')
+                if self.verbose:
+                    print(f"Using cached FAISS data ({len(self.faiss_documents)} documents)")
+                return
+            
             datasets_dir = os.path.join(base_dir, 'datasets')
             faiss_path_candidates = [
                 os.path.join(datasets_dir, 'clinical_trials.faiss'),
@@ -82,7 +105,8 @@ class EnrollmentAgent(LLMAgent):
             faiss_path = next((p for p in faiss_path_candidates if os.path.exists(p)), None)
             if faiss_path and os.path.exists(faiss_path):
                 self.faiss_index = faiss.read_index(faiss_path)
-                print(f"Loaded FAISS index from {faiss_path} with {self.faiss_index.ntotal} vectors")
+                if self.verbose:
+                    print(f"Loaded FAISS index from {faiss_path} with {self.faiss_index.ntotal} vectors")
 
             # Load metadata (prefer pkl if available, else CSV and synthesize text)
             pkl_path = next((p for p in metadata_pkl_candidates if os.path.exists(p)), None)
@@ -92,9 +116,11 @@ class EnrollmentAgent(LLMAgent):
                         meta = pickle.load(f)
                     self.faiss_documents = meta.get('documents', [])
                     self.faiss_df = meta.get('df')
-                    print(f"Loaded metadata from {pkl_path} with {len(self.faiss_documents)} documents")
+                    if self.verbose:
+                        print(f"Loaded metadata from {pkl_path} with {len(self.faiss_documents)} documents")
                 except Exception as e:
-                    print(f"Warning: Failed to load metadata pkl: {e}")
+                    if self.verbose:
+                        print(f"Warning: Failed to load metadata pkl: {e}")
 
             if self.faiss_df is None:
                 csv_path = next((p for p in csv_candidates if os.path.exists(p)), None)
@@ -116,21 +142,33 @@ class EnrollmentAgent(LLMAgent):
                             f"Study Type: {safe_get('Study type')}."
                         )
                     self.faiss_documents = self.faiss_df.apply(row_to_text, axis=1).tolist()
-                    print(f"Loaded CSV from {csv_path} with {len(self.faiss_documents)} documents")
+                    if self.verbose:
+                        print(f"Loaded CSV from {csv_path} with {len(self.faiss_documents)} documents")
 
             if self.faiss_index is None and self.faiss_df is not None:
                 # As a last resort, build an in-memory FAISS index from CSV (slower but functional)
                 try:
-                    print("FAISS index not found. Building transient index from CSV (first run may be slow)...")
+                    if self.verbose:
+                        print("FAISS index not found. Building transient index from CSV (first run may be slow)...")
                     embeddings = self.model.encode(self.faiss_documents, convert_to_numpy=True, normalize_embeddings=True)
                     d = embeddings.shape[1]
                     self.faiss_index = faiss.IndexFlatIP(d)
                     self.faiss_index.add(embeddings)
-                    print(f"Built transient FAISS index with {self.faiss_index.ntotal} vectors")
+                    if self.verbose:
+                        print(f"Built transient FAISS index with {self.faiss_index.ntotal} vectors")
                 except Exception as e:
-                    print(f"Error building transient FAISS index: {e}")
+                    if self.verbose:
+                        print(f"Error building transient FAISS index: {e}")
+            
+            # Cache for future instances
+            EnrollmentAgent._faiss_cache[cache_key] = {
+                'index': self.faiss_index,
+                'documents': self.faiss_documents,
+                'df': self.faiss_df
+            }
         except Exception as e:
-            print(f"Error initializing local FAISS/CSV backend: {e}")
+            if self.verbose:
+                print(f"Error initializing local FAISS/CSV backend: {e}")
     
     def search_by_nct_id(self, nct_id):
         """Search for a specific clinical trial by NCT ID"""
