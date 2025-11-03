@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import IntroAnimation from '@/components/landing/IntroAnimation';
 import CustomCursor from '@/components/landing/CustomCursor';
@@ -8,11 +8,13 @@ import FloatingParticles from '@/components/landing/FloatingParticles';
 import MorphingBackground from '@/components/landing/MorphingBackground';
 import Navbar from '@/components/landing/Navbar';
 import HeroSection from '@/components/landing/HeroSection';
-import FeaturesSection from '@/components/landing/FeaturesSection';
-import DemoSection from '@/components/landing/DemoSection';
-import CTASection from '@/components/landing/CTASection';
-import NewsletterSection from '@/components/landing/NewsletterSection';
-import Footer from '@/components/landing/Footer';
+
+// Lazy load components that are below the fold
+const FeaturesSection = lazy(() => import('@/components/landing/FeaturesSection'));
+const DemoSection = lazy(() => import('@/components/landing/DemoSection'));
+const CTASection = lazy(() => import('@/components/landing/CTASection'));
+const NewsletterSection = lazy(() => import('@/components/landing/NewsletterSection'));
+const Footer = lazy(() => import('@/components/landing/Footer'));
 
 export default function LandingPage() {
   const [showIntro, setShowIntro] = useState(true);
@@ -35,7 +37,7 @@ export default function LandingPage() {
 
   return (
     <main className="min-h-screen">
-      {/* Custom Cursor */}
+      {/* Custom Cursor - Only on desktop */}
       <CustomCursor />
       
       {/* Morphing Background */}
@@ -55,11 +57,13 @@ export default function LandingPage() {
         <>
           <Navbar />
           <HeroSection />
-          <FeaturesSection />
-          <DemoSection />
-          <CTASection />
-          <NewsletterSection />
-          <Footer />
+          <Suspense fallback={<div className="h-screen" />}>
+            <FeaturesSection />
+            <DemoSection />
+            <CTASection />
+            <NewsletterSection />
+            <Footer />
+          </Suspense>
         </>
       )}
     </main>

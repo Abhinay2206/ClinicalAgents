@@ -41,6 +41,34 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Performance Optimizations */
+* {
+  /* Enable hardware acceleration for transforms */
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  -webkit-perspective: 1000;
+  perspective: 1000;
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Hide custom cursor on touch devices */
+@media (hover: none) and (pointer: coarse) {
+  [class*="cursor"] {
+    display: none !important;
+  }
+}
+
 /* Subtle Animations */
 @keyframes fadeIn {
   from {

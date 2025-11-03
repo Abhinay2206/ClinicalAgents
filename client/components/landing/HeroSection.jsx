@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, useMotionValue, useTransform } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,57 +9,80 @@ import PageTransition from './PageTransition';
 
 export default function HeroSection() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [isMobile, setIsMobile] = useState(false);
+  const rafRef = useRef(null);
 
-  const handleMouseMove = (e) => {
-    const { clientX, clientY } = e;
-    const { left, top, width, height } = e.currentTarget.getBoundingClientRect();
-    const x = (clientX - left - width / 2) / width;
-    const y = (clientY - top - height / 2) / height;
-    setMousePosition({ x, y });
-  };
+  useEffect(() => {
+    // Check if device is mobile
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Throttled mouse move handler with RAF
+  const handleMouseMove = useCallback((e) => {
+    if (isMobile) return; // Skip on mobile
+    
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+    }
+
+    rafRef.current = requestAnimationFrame(() => {
+      const { clientX, clientY } = e;
+      const { left, top, width, height } = e.currentTarget.getBoundingClientRect();
+      const x = (clientX - left - width / 2) / width;
+      const y = (clientY - top - height / 2) / height;
+      setMousePosition({ x, y });
+    });
+  }, [isMobile]);
 
   return (
     <section 
       className="relative min-h-screen flex items-center justify-center overflow-hidden px-4"
       onMouseMove={handleMouseMove}
     >
-      {/* Animated Background with Parallax */}
+      {/* Animated Background with Parallax - Disabled on mobile */}
       <div className="absolute inset-0 opacity-30">
-        <motion.div 
-          className="absolute inset-0 bg-gradient-to-br from-[#00ADB5]/20 via-transparent to-[#00C6FF]/20"
-          style={{
-            x: mousePosition.x * 20,
-            y: mousePosition.y * 20,
-          }}
-        ></motion.div>
+        {!isMobile && (
+          <motion.div 
+            className="absolute inset-0 bg-gradient-to-br from-[#00ADB5]/20 via-transparent to-[#00C6FF]/20 will-change-transform"
+            style={{
+              x: mousePosition.x * 15,
+              y: mousePosition.y * 15,
+            }}
+          ></motion.div>
+        )}
         <motion.div
-          className="absolute top-20 left-20 w-64 h-64 rounded-full bg-[#00ADB5]/10 blur-3xl"
+          className="absolute top-20 left-20 w-64 h-64 rounded-full bg-[#00ADB5]/10 blur-3xl will-change-transform"
           animate={{
-            scale: [1, 1.2, 1],
+            scale: [1, 1.15, 1],
             opacity: [0.3, 0.5, 0.3],
           }}
-          style={{
-            x: mousePosition.x * 50,
-            y: mousePosition.y * 50,
-          }}
+          style={!isMobile ? {
+            x: mousePosition.x * 40,
+            y: mousePosition.y * 40,
+          } : {}}
           transition={{
-            duration: 8,
+            duration: 10,
             repeat: Infinity,
             ease: "easeInOut"
           }}
         />
         <motion.div
-          className="absolute bottom-20 right-20 w-96 h-96 rounded-full bg-[#00C6FF]/10 blur-3xl"
+          className="absolute bottom-20 right-20 w-96 h-96 rounded-full bg-[#00C6FF]/10 blur-3xl will-change-transform"
           animate={{
-            scale: [1.2, 1, 1.2],
+            scale: [1.15, 1, 1.15],
             opacity: [0.5, 0.3, 0.5],
           }}
-          style={{
-            x: mousePosition.x * -40,
-            y: mousePosition.y * -40,
-          }}
+          style={!isMobile ? {
+            x: mousePosition.x * -30,
+            y: mousePosition.y * -30,
+          } : {}}
           transition={{
-            duration: 10,
+            duration: 12,
             repeat: Infinity,
             ease: "easeInOut"
           }}
@@ -77,10 +100,10 @@ export default function HeroSection() {
         >
           <motion.div
             className="relative w-14 h-14 mx-auto"
-            style={{
-              x: mousePosition.x * 10,
-              y: mousePosition.y * 10,
-            }}
+            style={!isMobile ? {
+              x: mousePosition.x * 8,
+              y: mousePosition.y * 8,
+            } : {}}
             whileHover={{ scale: 1.15, rotate: 180 }}
             transition={{ type: "spring", stiffness: 260, damping: 20 }}
           >
@@ -88,7 +111,7 @@ export default function HeroSection() {
             <motion.div
               className="absolute inset-0 rounded-full border border-[#00ADB5]/20"
               animate={{ rotate: 360 }}
-              transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+              transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
             />
             {/* Inner Icon */}
             <motion.div
@@ -101,7 +124,7 @@ export default function HeroSection() {
                 ]
               }}
               transition={{
-                duration: 3,
+                duration: 4,
                 repeat: Infinity,
                 ease: "easeInOut"
               }}
@@ -111,29 +134,29 @@ export default function HeroSection() {
           </motion.div>
         </motion.div>
 
-        {/* Minimal Headline with Per-Character Magnifying Glass Effect */}
+        {/* Minimal Headline - Simplified for better performance */}
         <motion.h1
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.15 }}
-          className="text-5xl md:text-7xl lg:text-8xl font-bold mb-6 tracking-tight leading-none relative cursor-default"
+          className="text-5xl md:text-7xl lg:text-8xl font-bold mb-6 tracking-tight leading-none relative"
         >
-          {/* "Clinical" word */}
+          {/* "Clinical" word - Only enable hover on desktop */}
           <span className="inline-block">
-            {'Clinical'.split('').map((char, index) => (
+            {isMobile ? 'Clinical' : 'Clinical'.split('').map((char, index) => (
               <motion.span
                 key={`clinical-${index}`}
                 className="inline-block text-[var(--text-primary)] relative"
                 whileHover={{
-                  scale: 1.3,
+                  scale: 1.2,
                   y: -5,
                   filter: "brightness(1.3) drop-shadow(0 0 8px rgba(0, 173, 181, 0.5))",
                   zIndex: 10,
                 }}
                 transition={{
                   type: "spring",
-                  stiffness: 500,
-                  damping: 20,
+                  stiffness: 400,
+                  damping: 25,
                 }}
                 style={{
                   display: 'inline-block',
@@ -144,33 +167,38 @@ export default function HeroSection() {
               </motion.span>
             ))}
           </span>
-          
-          {/* "Agent" word with gradient */}
+          {' '}
+          {/* "Agent" word with gradient - Only enable hover on desktop */}
           <span className="inline-block">
-            {'Agent'.split('').map((char, index) => (
-              <motion.span
-                key={`agent-${index}`}
-                className="inline-block bg-clip-text text-transparent bg-gradient-to-r from-[#00ADB5] to-[#00C6FF] relative"
-                whileHover={{
-                  scale: 1.3,
-                  y: -5,
-                  filter: "brightness(1.4) saturate(1.3) drop-shadow(0 0 12px rgba(0, 198, 255, 0.6))",
-                  zIndex: 10,
-                }}
-                transition={{
-                  type: "spring",
-                  stiffness: 500,
-                  damping: 20,
-                }}
-                style={{
-                  display: 'inline-block',
-                  transformOrigin: 'center center',
-                  WebkitTextStroke: '0.5px rgba(0, 173, 181, 0.3)',
-                }}
-              >
-                {char}
-              </motion.span>
-            ))}
+            {isMobile ? (
+              <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#00ADB5] to-[#00C6FF]">
+                Agent
+              </span>
+            ) : (
+              'Agent'.split('').map((char, index) => (
+                <motion.span
+                  key={`agent-${index}`}
+                  className="inline-block relative bg-clip-text text-transparent bg-gradient-to-r from-[#00ADB5] to-[#00C6FF]"
+                  whileHover={{
+                    scale: 1.2,
+                    y: -5,
+                    filter: "brightness(1.4) saturate(1.3) drop-shadow(0 0 12px rgba(0, 198, 255, 0.6))",
+                    zIndex: 10,
+                  }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 400,
+                    damping: 25,
+                  }}
+                  style={{
+                    display: 'inline-block',
+                    transformOrigin: 'center center',
+                  }}
+                >
+                  {char}
+                </motion.span>
+              ))
+            )}
           </span>
         </motion.h1>
 
