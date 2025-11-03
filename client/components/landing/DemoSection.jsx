@@ -1,8 +1,8 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { motion, useScroll, useTransform } from 'framer-motion';
 import { User, Sparkles } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 const messages = [
   {
@@ -17,6 +17,15 @@ const messages = [
 
 export default function DemoSection() {
   const [visibleMessages, setVisibleMessages] = useState([]);
+  const sectionRef = useRef(null);
+  
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ['start end', 'end start']
+  });
+
+  const y = useTransform(scrollYProgress, [0, 1], [50, -50]);
+  const opacity = useTransform(scrollYProgress, [0, 0.2, 0.8, 1], [0, 1, 1, 0]);
 
   useEffect(() => {
     messages.forEach((_, index) => {
@@ -27,53 +36,90 @@ export default function DemoSection() {
   }, []);
 
   return (
-    <section id="demo" className="py-24 px-4 bg-[var(--bg-secondary)] scroll-mt-20">
-      <div className="max-w-5xl mx-auto">
+    <section 
+      id="demo" 
+      ref={sectionRef}
+      className="relative py-32 px-4 bg-[var(--bg-secondary)] scroll-mt-20 overflow-hidden"
+    >
+      {/* Parallax background elements */}
+      <motion.div 
+        className="absolute top-10 left-10 w-72 h-72 rounded-full bg-[#00C6FF]/5 blur-3xl pointer-events-none"
+        style={{ y, opacity }}
+      />
+      <motion.div 
+        className="absolute bottom-10 right-10 w-96 h-96 rounded-full bg-[#00ADB5]/5 blur-3xl pointer-events-none"
+        style={{ y: useTransform(scrollYProgress, [0, 1], [-50, 50]), opacity }}
+      />
+      <div className="max-w-5xl mx-auto relative z-10">
         {/* Section Header with Animated Badge */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-          className="text-center mb-16"
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+          className="text-center mb-20"
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            whileInView={{ opacity: 1, scale: 1 }}
+            initial={{ opacity: 0, scale: 0.8, y: 20 }}
+            whileInView={{ opacity: 1, scale: 1, y: 0 }}
             viewport={{ once: true }}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#00C6FF]/5 border border-[#00C6FF]/10 mb-8"
+            transition={{ duration: 0.6, delay: 0.2 }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-[#00C6FF]/10 to-[#00ADB5]/10 border border-[#00C6FF]/20 mb-8 backdrop-blur-sm"
           >
             <motion.span 
-              className="w-1.5 h-1.5 rounded-full bg-[#00C6FF]"
-              animate={{ opacity: [1, 0.3, 1] }}
+              className="w-2 h-2 rounded-full bg-[#00C6FF]"
+              animate={{ 
+                scale: [1, 1.3, 1],
+                opacity: [1, 0.5, 1] 
+              }}
               transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
             />
-            <span className="text-xs font-medium text-[var(--accent-teal)] tracking-wide">LIVE DEMO</span>
+            <span className="text-sm font-medium text-[var(--accent-teal)] tracking-wide">LIVE DEMO</span>
           </motion.div>
-          <h2 className="text-4xl md:text-5xl font-bold text-[var(--text-primary)] mb-4">
+          
+          <motion.h2 
+            className="text-4xl md:text-6xl font-bold text-[var(--text-primary)] mb-6"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8, delay: 0.3 }}
+          >
             See it in action
-          </h2>
-          <p className="text-lg text-[var(--text-secondary)] max-w-2xl mx-auto">
+          </motion.h2>
+          
+          <motion.p 
+            className="text-lg md:text-xl text-[var(--text-secondary)] max-w-2xl mx-auto"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.8, delay: 0.4 }}
+          >
             Experience AI-powered clinical insights
-          </p>
+          </motion.p>
         </motion.div>
 
-        {/* Chat Demo with 3D Tilt */}
+        {/* Chat Demo with 3D Tilt and Depth */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          whileInView={{ opacity: 1, scale: 1 }}
-          viewport={{ once: true }}
+          initial={{ opacity: 0, y: 60, scale: 0.9 }}
+          whileInView={{ opacity: 1, y: 0, scale: 1 }}
+          viewport={{ once: true, margin: "-100px" }}
           whileHover={{ 
-            scale: 1.02,
-            rotateX: 2,
-            rotateY: 2,
+            scale: 1.01,
+            y: -5,
+            transition: { type: "spring", stiffness: 300, damping: 30 }
           }}
           transition={{ 
-            duration: 0.6,
-            hover: { type: "spring", stiffness: 300, damping: 30 }
+            duration: 0.8,
+            ease: [0.22, 1, 0.36, 1]
           }}
-          className="rounded-2xl bg-[var(--bg-tertiary)]/80 backdrop-blur-xl border border-[var(--border-subtle)] shadow-2xl p-6 md:p-8"
+          className="relative rounded-3xl bg-[var(--bg-tertiary)]/90 backdrop-blur-xl border border-[var(--border-subtle)] shadow-[0_20px_70px_-15px_rgba(0,173,181,0.3)] p-6 md:p-10"
+          style={{ 
+            transformStyle: "preserve-3d",
+            perspective: "1000px"
+          }}
         >
+          {/* Glow effect */}
+          <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-[#00ADB5]/10 via-transparent to-[#00C6FF]/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
           <div className="space-y-6">
             {messages.map((message, index) => (
               <motion.div

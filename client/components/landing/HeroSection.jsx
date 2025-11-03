@@ -1,16 +1,30 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { motion, useMotionValue, useTransform } from 'framer-motion';
-import { Sparkles } from 'lucide-react';
+import { motion, useScroll, useTransform } from 'framer-motion';
+import { Sparkles, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import MagneticButton from './MagneticButton';
-import PageTransition from './PageTransition';
+import Hero3DElements from './Hero3DElements';
+import Link from 'next/link';
 
 export default function HeroSection() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [isMobile, setIsMobile] = useState(false);
   const rafRef = useRef(null);
+  const sectionRef = useRef(null);
+
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ['start start', 'end start']
+  });
+
+  // Parallax transforms for different layers
+  const y1 = useTransform(scrollYProgress, [0, 1], ['0%', '50%']);
+  const y2 = useTransform(scrollYProgress, [0, 1], ['0%', '30%']);
+  const y3 = useTransform(scrollYProgress, [0, 1], ['0%', '20%']);
+  const opacity = useTransform(scrollYProgress, [0, 0.5, 1], [1, 0.5, 0]);
+  const scale = useTransform(scrollYProgress, [0, 1], [1, 0.9]);
 
   useEffect(() => {
     // Check if device is mobile
@@ -41,45 +55,93 @@ export default function HeroSection() {
 
   return (
     <section 
+      ref={sectionRef}
       className="relative min-h-screen flex items-center justify-center overflow-hidden px-4"
       onMouseMove={handleMouseMove}
     >
-      {/* Animated Background with Parallax - Disabled on mobile */}
-      <div className="absolute inset-0 opacity-30">
-        {!isMobile && (
-          <motion.div 
-            className="absolute inset-0 bg-gradient-to-br from-[#00ADB5]/20 via-transparent to-[#00C6FF]/20 will-change-transform"
-            style={{
-              x: mousePosition.x * 15,
-              y: mousePosition.y * 15,
-            }}
-          ></motion.div>
-        )}
+      {/* 3D Elements */}
+      <Hero3DElements />
+      
+      {/* Multi-layered Parallax Backgrounds */}
+      {/* Background layer - slowest movement */}
+      <motion.div 
+        className="absolute inset-0 opacity-20"
+        style={{ y: y3 }}
+      >
+        <motion.div 
+          className="absolute inset-0 bg-gradient-to-br from-[#00ADB5]/20 via-transparent to-[#00C6FF]/20"
+          style={!isMobile ? {
+            x: mousePosition.x * 10,
+            y: mousePosition.y * 10,
+          } : {}}
+        />
+        
+        {/* Floating abstract shapes */}
         <motion.div
-          className="absolute top-20 left-20 w-64 h-64 rounded-full bg-[#00ADB5]/10 blur-3xl will-change-transform"
+          className="absolute top-20 left-20 w-80 h-80 rounded-full bg-gradient-to-br from-[#00ADB5]/15 to-transparent blur-3xl"
           animate={{
-            scale: [1, 1.15, 1],
-            opacity: [0.3, 0.5, 0.3],
+            scale: [1, 1.2, 1],
+            opacity: [0.3, 0.6, 0.3],
           }}
           style={!isMobile ? {
-            x: mousePosition.x * 40,
-            y: mousePosition.y * 40,
+            x: mousePosition.x * 30,
+            y: mousePosition.y * 30,
           } : {}}
           transition={{
-            duration: 10,
+            duration: 15,
             repeat: Infinity,
             ease: "easeInOut"
           }}
         />
+      </motion.div>
+
+      {/* Midground layer - medium movement */}
+      <motion.div 
+        className="absolute inset-0 opacity-25"
+        style={{ y: y2 }}
+      >
         <motion.div
-          className="absolute bottom-20 right-20 w-96 h-96 rounded-full bg-[#00C6FF]/10 blur-3xl will-change-transform"
+          className="absolute bottom-32 right-32 w-96 h-96 rounded-full bg-gradient-to-tl from-[#00C6FF]/15 to-transparent blur-3xl"
           animate={{
-            scale: [1.15, 1, 1.15],
+            scale: [1.2, 1, 1.2],
             opacity: [0.5, 0.3, 0.5],
           }}
           style={!isMobile ? {
-            x: mousePosition.x * -30,
-            y: mousePosition.y * -30,
+            x: mousePosition.x * -25,
+            y: mousePosition.y * -25,
+          } : {}}
+          transition={{
+            duration: 18,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+        />
+        
+        {/* Rotating accent ring */}
+        <motion.div
+          className="absolute top-1/4 right-1/4 w-64 h-64"
+          animate={{ rotate: 360 }}
+          transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
+        >
+          <div className="w-full h-full rounded-full border border-[#00ADB5]/10" />
+        </motion.div>
+      </motion.div>
+
+      {/* Foreground layer - fastest movement */}
+      <motion.div 
+        className="absolute inset-0 opacity-30"
+        style={{ y: y1 }}
+      >
+        <motion.div
+          className="absolute top-1/3 right-1/3 w-72 h-72 rounded-full bg-[#00ADB5]/20 blur-2xl"
+          animate={{
+            x: [0, 40, 0],
+            y: [0, -30, 0],
+            scale: [1, 1.15, 1],
+          }}
+          style={!isMobile ? {
+            x: mousePosition.x * 50,
+            y: mousePosition.y * 50,
           } : {}}
           transition={{
             duration: 12,
@@ -87,10 +149,13 @@ export default function HeroSection() {
             ease: "easeInOut"
           }}
         />
-      </div>
+      </motion.div>
 
-      {/* Content */}
-      <div className="relative z-10 max-w-6xl mx-auto text-center">
+      {/* Content with parallax scaling and fading */}
+      <motion.div 
+        className="relative z-10 max-w-6xl mx-auto text-center"
+        style={{ opacity, scale }}
+      >
         {/* Minimal Floating Icon */}
         <motion.div
           initial={{ opacity: 0, scale: 0.8 }}
@@ -107,12 +172,6 @@ export default function HeroSection() {
             whileHover={{ scale: 1.15, rotate: 180 }}
             transition={{ type: "spring", stiffness: 260, damping: 20 }}
           >
-            {/* Subtle Rotating Ring */}
-            <motion.div
-              className="absolute inset-0 rounded-full border border-[#00ADB5]/20"
-              animate={{ rotate: 360 }}
-              transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-            />
             {/* Inner Icon */}
             <motion.div
               className="w-full h-full rounded-full bg-gradient-to-br from-[#00ADB5] to-[#00C6FF] flex items-center justify-center shadow-lg"
@@ -244,7 +303,7 @@ export default function HeroSection() {
             </motion.div>
           </MagneticButton>
         </motion.div>
-      </div>
+      </motion.div>
 
       {/* Scroll Indicator - Outside content div for proper absolute positioning */}
       <motion.div
