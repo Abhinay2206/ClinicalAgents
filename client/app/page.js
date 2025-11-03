@@ -73,8 +73,18 @@ function LandingPageContent() {
         
         {/* Main content wrapper with consistent background (all sections except footer) */}
         <div className="relative">
-          {/* Unified Background for all sections */}
+          {/* Unified Background - Dark gradient base */}
           <div className="absolute inset-0 bg-gradient-to-b from-[var(--bg-secondary)] via-[var(--bg-primary)] to-[var(--bg-secondary)]" />
+          
+          {/* Grid pattern background with parallax - matching HowItWorks style */}
+          <motion.div 
+            style={{ 
+              y: bgY1,
+              backgroundImage: 'linear-gradient(#00ADB5 1px, transparent 1px), linear-gradient(90deg, #00ADB5 1px, transparent 1px)',
+              backgroundSize: '60px 60px',
+            }}
+            className="absolute inset-0 opacity-[0.03] will-change-transform pointer-events-none"
+          />
           
           {/* Animated gradient blobs with parallax */}
           <motion.div 
@@ -106,41 +116,21 @@ function LandingPageContent() {
             
             {/* How It Works Section - Step by step explanation */}
             <HowItWorksSection />
-          </div>
-        </div>
-        
-        
-        {/* Lazy loaded sections with same background wrapper */}
-        <Suspense fallback={<div className="h-screen flex items-center justify-center">
-          <div className="w-8 h-8 border-2 border-[var(--accent-teal)] border-t-transparent rounded-full animate-spin" />
-        </div>}>
-          <div className="relative">
-            {/* Unified Background continues */}
-            <div className="absolute inset-0 bg-gradient-to-b from-[var(--bg-secondary)] via-[var(--bg-primary)] to-[var(--bg-secondary)]" />
-            <motion.div 
-              style={{ y: bgY2 }}
-              className="absolute top-[20%] right-[10%] w-96 h-96 rounded-full will-change-transform"
-            >
-              <div className="w-full h-full rounded-full bg-gradient-to-br from-[#00C6FF]/10 to-transparent blur-3xl animate-pulse" style={{ animationDuration: '9s', animationDelay: '1s' }} />
-            </motion.div>
-            <motion.div 
-              style={{ y: bgY3 }}
-              className="absolute bottom-[30%] left-[8%] w-[450px] h-[450px] rounded-full will-change-transform"
-            >
-              <div className="w-full h-full rounded-full bg-gradient-to-tl from-[#00ADB5]/10 to-transparent blur-3xl animate-pulse" style={{ animationDuration: '11s', animationDelay: '3s' }} />
-            </motion.div>
             
-            <div className="relative z-10">
+            {/* Lazy loaded sections with same unified background */}
+            <Suspense fallback={<div className="h-screen flex items-center justify-center">
+              <div className="w-8 h-8 border-2 border-[var(--accent-teal)] border-t-transparent rounded-full animate-spin" />
+            </div>}>
               <FeaturesSection />
               <DemoSection />
               <CTASection />
               <NewsletterSection />
-            </div>
+            </Suspense>
           </div>
-          
-          {/* Footer outside the background wrapper */}
-          <Footer />
-        </Suspense>
+        </div>
+        
+        {/* Footer outside the background wrapper */}
+        <Footer />
     </main>
   );
 }
