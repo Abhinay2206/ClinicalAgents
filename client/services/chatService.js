@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { authService } from './authService';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
@@ -10,6 +11,36 @@ const apiClient = axios.create({
   },
   timeout: 120000, // 2 minutes timeout for chat requests
 });
+
+// Add auth token to all requests
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = authService.getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Handle 401 errors (unauthorized) - redirect to login
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token expired or invalid
+      authService.removeToken();
+      // Redirect to login if not already there
+      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 class ChatService {
   async sendMessage(prompt, sessionId = null) {
@@ -201,6 +232,36 @@ class ChatService {
     }
 
     return truncated + '...';
+  }
+
+  async getSessions() {
+    try {
+      const response = await apiClient.get('/sessions');
+      return response.data.sessions || [];
+    } catch (error) {
+      console.error('Get sessions error:', error);
+      throw new Error(error.response?.data?.detail || error.message || 'Failed to fetch sessions');
+    }
+  }
+
+  async createSession(title = 'New Chat') {
+    try {
+      const response = await apiClient.post('/sessions', { title });
+      return response.data;
+    } catch (error) {
+      console.error('Create session error:', error);
+      throw new Error(error.response?.data?.detail || error.message || 'Failed to create session');
+    }
+  }
+
+  async deleteSession(sessionId) {
+    try {
+      const response = await apiClient.delete(`/sessions/${sessionId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Delete session error:', error);
+      throw new Error(error.response?.data?.detail || error.message || 'Failed to delete session');
+    }
   }
 }
 

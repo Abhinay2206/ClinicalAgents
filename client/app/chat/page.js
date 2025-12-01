@@ -1,7 +1,12 @@
 'use client';
 
 import ChatInterface from '@/components/chat/ChatInterface';
+import ProtectedRoute from '@/components/auth/ProtectedRoute';
 
 export default function ChatPage() {
-  return <ChatInterface />;
+  return (
+    <ProtectedRoute>
+      <ChatInterface />
+    </ProtectedRoute>
+  );
 }

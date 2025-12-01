@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 from typing import Optional, Dict, Any
+from functools import wraps
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -12,6 +13,15 @@ from gemini_client import GeminiClient
 from agents.human_proxy_agent import HumanProxyAgent
 from storage.mongo_async import AsyncMongoStore
 from simple_dynamic_orchestrator import SimpleDynamicOrchestrator
+from models import UserRegister, UserLogin, TokenResponse, UserResponse, SessionCreate, SessionResponse
+from auth import (
+    get_password_hash, 
+    verify_password, 
+    create_user_token, 
+    get_current_user,
+    security
+)
+from fastapi.security import HTTPAuthorizationCredentials
 
 
 class ChatRequest(BaseModel):
@@ -67,20 +77,242 @@ def _new_proxy(session_id: Optional[str] = None) -> HumanProxyAgent:
     )
 
 
+# Dependency to inject store into get_current_user
+async def get_current_user_with_store(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> UserResponse:
+    """Get current user with store injected"""
+    return await get_current_user(credentials, store=_mongo_store)
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {"status": "ok", "use_proxy": os.getenv("USE_PROXY", "1") != "0"}
 
 
+# ---------- Authentication Endpoints ----------
+
+@app.post("/auth/register", response_model=TokenResponse)
+async def register(user_data: UserRegister):
+    """Register a new user"""
+    try:
+        # Check if user already exists
+        existing_user = await _mongo_store.get_user_by_email(user_data.email)
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Hash password and create user
+        hashed_password = get_password_hash(user_data.password)
+        user = await _mongo_store.create_user(
+            email=user_data.email,
+            hashed_password=hashed_password,
+            name=user_data.name
+        )
+        
+        # Create access token
+        access_token = create_user_token(user)
+        
+        # Return token and user info
+        return TokenResponse(
+            access_token=access_token,
+            user=UserResponse(
+                id=user["id"],
+                email=user["email"],
+                name=user["name"],
+                created_at=user["created_at"],
+                is_active=user["is_active"]
+            )
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Registration error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register user: {str(e)}"
+        )
+
+
+@app.post("/auth/login", response_model=TokenResponse)
+async def login(credentials: UserLogin):
+    """Login and get JWT token"""
+    try:
+        # Get user by email
+        user = await _mongo_store.get_user_by_email(credentials.email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Verify password
+        if not verify_password(credentials.password, user["hashed_password"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Create access token
+        access_token = create_user_token(user)
+        
+        # Return token and user info
+        return TokenResponse(
+            access_token=access_token,
+            user=UserResponse(
+                id=user["id"],
+                email=user["email"],
+                name=user["name"],
+                created_at=user["created_at"],
+                is_active=user.get("is_active", True)
+            )
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Login error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to login: {str(e)}"
+        )
+
+
+@app.get("/auth/me", response_model=UserResponse)
+async def get_me(current_user: UserResponse = Depends(get_current_user_with_store)):
+    """Get current user profile"""
+    return current_user
+
+
+# ---------- Session Management Endpoints ----------
+
+@app.get("/sessions")
+async def get_sessions(current_user: UserResponse = Depends(get_current_user_with_store)):
+    """Get all sessions for current user"""
+    try:
+        sessions = await _mongo_store.get_user_sessions(current_user.id)
+        return {"sessions": sessions}
+    except Exception as e:
+        print(f"❌ Get sessions error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get sessions: {str(e)}"
+        )
+
+
+@app.post("/sessions", response_model=SessionResponse)
+async def create_session(
+    session_data: SessionCreate,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Create a new chat session"""
+    try:
+        session = await _mongo_store.create_session(
+            user_id=current_user.id,
+            title=session_data.title or "New Chat"
+        )
+        return SessionResponse(**session)
+    except Exception as e:
+        print(f"❌ Create session error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create session: {str(e)}"
+        )
+
+
+@app.delete("/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Delete a session"""
+    try:
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to delete this session"
+            )
+        
+        await _mongo_store.delete_session(session_id)
+        return {"message": "Session deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Delete session error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete session: {str(e)}"
+        )
+
+
+# ---------- Chat Endpoints (Updated with Authentication) ----------
+
 @app.post("/chat")
-async def chat(req: ChatRequest):
+async def chat(
+    req: ChatRequest,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt is required")
     
     try:
-        proxy = _new_proxy(session_id=req.session_id)
+        # If no session_id provided, create a new session
+        session_id = req.session_id
+        if not session_id:
+            session = await _mongo_store.create_session(
+                user_id=current_user.id,
+                title="New Chat"
+            )
+            session_id = session["id"]
+        else:
+            # Verify session belongs to user
+            session = await _mongo_store.get_session_by_id(session_id)
+            if not session:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Session not found"
+                )
+            if session["user_id"] != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized to access this session"
+                )
+        
+        # Save user message with user_id
+        await _mongo_store.save_chat_message_with_user(
+            user_id=current_user.id,
+            session_id=session_id,
+            role="user",
+            content=req.prompt
+        )
+        
+        # Process with proxy
+        proxy = _new_proxy(session_id=session_id)
         result = await proxy.handle_user_prompt_async(req.prompt)
+        
+        # Save assistant response with user_id
+        await _mongo_store.save_chat_message_with_user(
+            user_id=current_user.id,
+            session_id=session_id,
+            role="assistant",
+            content=result.get("final_output", ""),
+            agent_outputs=result
+        )
+        
+        # Add session_id to response
+        result["session_id"] = session_id
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Chat error: {str(e)}")
         raise HTTPException(
@@ -90,14 +322,41 @@ async def chat(req: ChatRequest):
 
 
 @app.get("/history/{session_id}")
-async def history(session_id: str):
+async def history(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
     if not session_id or not session_id.strip():
         raise HTTPException(status_code=400, detail="session_id is required")
     
     try:
-        proxy = _new_proxy(session_id=session_id)
-        data = await proxy.fetch_session_history(session_id)
-        return data
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session"
+            )
+        
+        # Get history for this user's session
+        history = await _mongo_store.get_session_history_for_user(
+            user_id=current_user.id,
+            session_id=session_id
+        )
+        
+        return {
+            "session_id": session_id,
+            "history": history,
+            "audit_logs": []
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ History error: {str(e)}")
         raise HTTPException(
@@ -107,14 +366,33 @@ async def history(session_id: str):
 
 
 @app.get("/replay/{session_id}")
-async def replay(session_id: str):
+async def replay(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
     if not session_id or not session_id.strip():
         raise HTTPException(status_code=400, detail="session_id is required")
     
     try:
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session"
+            )
+        
         proxy = _new_proxy(session_id=session_id)
         data = await proxy.replay_session(session_id)
         return data
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Replay error: {str(e)}")
         raise HTTPException(

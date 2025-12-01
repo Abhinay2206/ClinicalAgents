@@ -1,104 +1,125 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { generateId } from '@/utils/idUtils';
+import { chatService } from '@/services/chatService';
+import { useAuth } from '@/contexts/AuthContext';
 
 export function useSessions() {
   const [sessions, setSessions] = useState([]);
   const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
 
-  // Load sessions from localStorage on mount
+  // Load sessions from backend when authenticated
   useEffect(() => {
-    const savedSessions = localStorage.getItem('clinical-agent-sessions');
-    if (savedSessions) {
+    const loadSessions = async () => {
+      if (authLoading) return; // Wait for auth to load
+
+      if (!isAuthenticated) {
+        setSessions([]);
+        setCurrentSessionId(null);
+        setIsLoading(false);
+        return;
+      }
+
       try {
-        const parsed = JSON.parse(savedSessions);
-        setSessions(parsed);
-        if (parsed.length > 0) {
-          setCurrentSessionId(parsed[0].id);
+        setIsLoading(true);
+        const userSessions = await chatService.getSessions();
+        setSessions(userSessions);
+
+        // Set current session to the most recent one
+        if (userSessions.length > 0) {
+          setCurrentSessionId(userSessions[0].id);
+        } else {
+          // Create a default session if none exist
+          const newSession = await chatService.createSession('New Chat');
+          setSessions([newSession]);
+          setCurrentSessionId(newSession.id);
         }
       } catch (err) {
-        console.error('Failed to parse sessions:', err);
-        initializeDefaultSession();
+        console.error('Failed to load sessions:', err);
+        // If loading fails, create a new session
+        try {
+          const newSession = await chatService.createSession('New Chat');
+          setSessions([newSession]);
+          setCurrentSessionId(newSession.id);
+        } catch (createErr) {
+          console.error('Failed to create session:', createErr);
+        }
+      } finally {
+        setIsLoading(false);
       }
-    } else {
-      initializeDefaultSession();
-    }
-  }, []);
-
-  // Save sessions to localStorage whenever they change
-  useEffect(() => {
-    if (sessions.length > 0) {
-      localStorage.setItem('clinical-agent-sessions', JSON.stringify(sessions));
-    }
-  }, [sessions]);
-
-  const initializeDefaultSession = () => {
-    const defaultSession = {
-      id: generateId(),
-      title: 'New Chat',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
     };
-    setSessions([defaultSession]);
-    setCurrentSessionId(defaultSession.id);
-  };
 
-  const createNewSession = useCallback(() => {
-    const newSession = {
-      id: generateId(),
-      title: 'New Chat',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setSessions(prev => [newSession, ...prev]);
-    setCurrentSessionId(newSession.id);
-    return newSession.id;
+    loadSessions();
+  }, [isAuthenticated, authLoading]);
+
+  const createNewSession = useCallback(async () => {
+    try {
+      const newSession = await chatService.createSession('New Chat');
+      setSessions(prev => [newSession, ...prev]);
+      setCurrentSessionId(newSession.id);
+      return newSession.id;
+    } catch (err) {
+      console.error('Failed to create session:', err);
+      throw err;
+    }
   }, []);
 
   const switchSession = useCallback((sessionId) => {
     setCurrentSessionId(sessionId);
   }, []);
 
-  const deleteSession = useCallback((sessionId) => {
-    setSessions(prev => {
-      const updated = prev.filter(s => s.id !== sessionId);
-      
-      // If deleting current session, switch to another
-      if (sessionId === currentSessionId) {
-        if (updated.length > 0) {
-          setCurrentSessionId(updated[0].id);
-        } else {
-          // Create a new session if all deleted
-          const newSession = {
-            id: generateId(),
-            title: 'New Chat',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          };
-          setCurrentSessionId(newSession.id);
-          return [newSession];
+  const deleteSession = useCallback(async (sessionId) => {
+    try {
+      await chatService.deleteSession(sessionId);
+
+      setSessions(prev => {
+        const updated = prev.filter(s => s.id !== sessionId);
+
+        // If deleting current session, switch to another
+        if (sessionId === currentSessionId) {
+          if (updated.length > 0) {
+            setCurrentSessionId(updated[0].id);
+          } else {
+            // Create a new session if all deleted
+            createNewSession();
+          }
         }
-      }
-      
-      return updated;
-    });
-  }, [currentSessionId]);
+
+        return updated;
+      });
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+      throw err;
+    }
+  }, [currentSessionId, createNewSession]);
 
   const updateSessionTitle = useCallback((sessionId, title) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId 
-        ? { ...s, title, updatedAt: new Date().toISOString() }
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId
+        ? { ...s, title, updated_at: new Date().toISOString() }
         : s
     ));
+  }, []);
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const userSessions = await chatService.getSessions();
+      setSessions(userSessions);
+    } catch (err) {
+      console.error('Failed to refresh sessions:', err);
+    }
   }, []);
 
   return {
     sessions,
     currentSessionId,
+    isLoading,
     createNewSession,
     switchSession,
     deleteSession,
     updateSessionTitle,
+    refreshSessions,
   };
 }

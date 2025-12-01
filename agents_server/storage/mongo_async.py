@@ -77,7 +77,18 @@ class AsyncMongoStore:
 
     async def _ensure_indexes(self):
         assert self._db is not None
+        # User indexes
+        await self._db["users"].create_index([("email", 1)], unique=True)
+        
+        # Session indexes
+        await self._db["sessions"].create_index([("user_id", 1), ("created_at", -1)])
+        await self._db["sessions"].create_index([("id", 1)], unique=True)
+        
+        # Chat memory indexes - updated to support user_id
+        await self._db["chat_memory"].create_index([("user_id", 1), ("session_id", 1), ("timestamp", 1)])
         await self._db["chat_memory"].create_index([("session_id", 1), ("timestamp", 1)])
+        
+        # Audit logs
         await self._db["audit_logs"].create_index([("session_id", 1), ("timestamp", 1)])
         await self._db["backups"].create_index([("session_id", 1), ("created_at", 1)])
 
@@ -173,3 +184,179 @@ class AsyncMongoStore:
         # Distinct can be expensive; for small scale it's acceptable
         sessions = await self._db["chat_memory"].distinct("session_id")
         return sessions[:limit]
+
+    # ---------- User Management ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def create_user(self, email: str, hashed_password: str, name: str) -> Dict[str, Any]:
+        """Create a new user"""
+        if not await self._ensure_connected():
+            raise Exception("MongoDB unavailable")
+        assert self._db is not None
+        
+        from bson import ObjectId
+        user_id = str(ObjectId())
+        
+        doc = {
+            "id": user_id,
+            "email": email,
+            "hashed_password": hashed_password,
+            "name": name,
+            "created_at": dt.datetime.utcnow().isoformat(),
+            "is_active": True,
+        }
+        await self._db["users"].insert_one(doc)
+        return doc
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Get user by email"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        user = await self._db["users"].find_one({"email": email})
+        if user and "_id" in user:
+            user["_id"] = str(user["_id"])
+        return user
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by ID"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        user = await self._db["users"].find_one({"id": user_id})
+        if user and "_id" in user:
+            user["_id"] = str(user["_id"])
+        return user
+
+    # ---------- Session Management ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def create_session(self, user_id: str, title: str = "New Chat") -> Dict[str, Any]:
+        """Create a new chat session for a user"""
+        if not await self._ensure_connected():
+            raise Exception("MongoDB unavailable")
+        assert self._db is not None
+        
+        from bson import ObjectId
+        session_id = str(ObjectId())
+        
+        doc = {
+            "id": session_id,
+            "user_id": user_id,
+            "title": title,
+            "created_at": dt.datetime.utcnow().isoformat(),
+            "updated_at": dt.datetime.utcnow().isoformat(),
+        }
+        await self._db["sessions"].insert_one(doc)
+        return doc
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_user_sessions(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get all sessions for a user"""
+        if not await self._ensure_connected():
+            return []
+        assert self._db is not None
+        
+        cursor = self._db["sessions"].find({"user_id": user_id}).sort("created_at", -1).limit(limit)
+        sessions = [doc async for doc in cursor]
+        
+        # Convert ObjectId to string
+        for session in sessions:
+            if "_id" in session:
+                session["_id"] = str(session["_id"])
+        
+        return sessions
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get a session by ID"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        session = await self._db["sessions"].find_one({"id": session_id})
+        if session and "_id" in session:
+            session["_id"] = str(session["_id"])
+        return session
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def update_session_title(self, session_id: str, title: str) -> bool:
+        """Update session title"""
+        if not await self._ensure_connected():
+            return False
+        assert self._db is not None
+        
+        result = await self._db["sessions"].update_one(
+            {"id": session_id},
+            {"$set": {"title": title, "updated_at": dt.datetime.utcnow().isoformat()}}
+        )
+        return result.modified_count > 0
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def delete_session(self, session_id: str) -> bool:
+        """Delete a session and all its messages"""
+        if not await self._ensure_connected():
+            return False
+        assert self._db is not None
+        
+        # Delete session document
+        await self._db["sessions"].delete_one({"id": session_id})
+        
+        # Delete all messages in this session
+        await self._db["chat_memory"].delete_many({"session_id": session_id})
+        
+        # Delete audit logs
+        await self._db["audit_logs"].delete_many({"session_id": session_id})
+        
+        return True
+
+    # ---------- Updated Chat Memory with User ID ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def save_chat_message_with_user(
+        self, 
+        user_id: str, 
+        session_id: str, 
+        role: str, 
+        content: str, 
+        agent_outputs: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Save chat message with user_id"""
+        if not await self._ensure_connected():
+            return ""
+        assert self._db is not None
+        
+        doc = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "role": role,
+            "content": content,
+            "agent_outputs": agent_outputs or {},
+            "timestamp": dt.datetime.utcnow(),
+        }
+        res = await self._db["chat_memory"].insert_one(doc)
+        return str(res.inserted_id)
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_session_history_for_user(self, user_id: str, session_id: str) -> List[Dict[str, Any]]:
+        """Get session history, ensuring it belongs to the user"""
+        if not await self._ensure_connected():
+            return []
+        assert self._db is not None
+        
+        cursor = self._db["chat_memory"].find({
+            "user_id": user_id,
+            "session_id": session_id
+        }).sort("timestamp", 1)
+        
+        docs = [doc async for doc in cursor]
+        
+        # Convert ObjectId and datetime to string
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        
+        return docs
