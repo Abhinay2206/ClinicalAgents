@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import faiss
 import pickle
+import requests
+import json
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 from .base_agent import LLMAgent
@@ -275,6 +277,251 @@ class EnrollmentAgent(LLMAgent):
             print(f"Error in semantic search (local FAISS): {e}")
             return []
     
+    def fetch_from_clinicaltrials_api(self, search_term, page_size=100):
+        """
+        Fetch clinical trials from ClinicalTrials.gov API
+        Returns list of trials in a format compatible with local search results
+        """
+        try:
+            url = "https://clinicaltrials.gov/api/v2/studies"
+            params = {
+                "query.term": search_term,
+                "pageSize": page_size
+            }
+            
+            if self.verbose:
+                print(f"Fetching trials from ClinicalTrials.gov API for: {search_term}")
+            
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            studies = data.get('studies', [])
+            
+            if self.verbose:
+                print(f"Retrieved {len(studies)} trials from API")
+            
+            # Convert API format to our standard format
+            formatted_results = []
+            for i, study in enumerate(studies):
+                protocol = study.get('protocolSection', {})
+                identification = protocol.get('identificationModule', {})
+                status_module = protocol.get('statusModule', {})
+                eligibility = protocol.get('eligibilityModule', {})
+                conditions_module = protocol.get('conditionsModule', {})
+                design_module = protocol.get('designModule', {})
+                
+                nct_id = identification.get('nctId', 'N/A')
+                title = identification.get('briefTitle', 'N/A')
+                overall_status = status_module.get('overallStatus', 'N/A')
+                why_stopped = status_module.get('whyStopped', 'N/A')
+                phase = design_module.get('phases', ['N/A'])[0] if design_module.get('phases') else 'N/A'
+                study_type = design_module.get('studyType', 'N/A')
+                conditions = ', '.join(conditions_module.get('conditions', ['N/A']))
+                eligibility_criteria = eligibility.get('eligibilityCriteria', 'N/A')
+                
+                metadata = {
+                    'nct_id': nct_id,
+                    'disease': conditions,
+                    'status': overall_status,
+                    'phase': phase,
+                    'study_type': study_type,
+                    'conditions': conditions,
+                    'why_stopped': why_stopped,
+                    'eligibility_criteria': eligibility_criteria,
+                    'title': title
+                }
+                
+                document = f"Disease: {conditions}. NCT ID: {nct_id}. Status: {overall_status}. " \
+                          f"Why Stopped: {why_stopped}. Eligibility: {eligibility_criteria[:200]}... " \
+                          f"Phase: {phase}. Conditions: {conditions}. Study Type: {study_type}."
+                
+                formatted_results.append({
+                    'document': document,
+                    'metadata': metadata,
+                    'id': nct_id,
+                    'rank': i + 1,
+                    'source': 'api'
+                })
+            
+            return formatted_results
+            
+        except requests.exceptions.RequestException as e:
+            if self.verbose:
+                print(f"Error fetching from ClinicalTrials.gov API: {e}")
+            return []
+        except Exception as e:
+            if self.verbose:
+                print(f"Unexpected error in API fetch: {e}")
+            return []
+    
+    def assess_search_results(self, results, min_similarity=0.3, min_results=3):
+        """
+        Assess if search results are sufficient or if API fallback is needed
+        Returns True if results are sufficient, False if API fallback needed
+        """
+        if not results:
+            return False
+        
+        if len(results) < min_results:
+            return False
+        
+        # Check similarity scores if available
+        has_good_matches = False
+        for result in results:
+            similarity = result.get('similarity_score', 0)
+            if similarity >= min_similarity:
+                has_good_matches = True
+                break
+        
+        return has_good_matches or len(results) >= 5
+    
+    def decide_response_strategy(self, query, api_results):
+        """
+        Use LLM to decide whether to use API results or provide a generalized answer
+        Returns decision dict with 'use_api_data' boolean and 'reasoning' string
+        """
+        if not api_results:
+            return {
+                'use_api_data': False,
+                'reasoning': 'No API results available'
+            }
+        
+        # Prepare summary of API results
+        result_summary = f"Found {len(api_results)} trials from ClinicalTrials.gov API:\n"
+        for i, trial in enumerate(api_results[:5], 1):
+            meta = trial.get('metadata', {})
+            result_summary += f"{i}. {meta.get('nct_id', 'N/A')} - {meta.get('title', 'N/A')[:80]}... " \
+                            f"Status: {meta.get('status', 'N/A')}\n"
+        
+        prompt = f"""
+        Analyze the following query and API search results to decide the best response strategy.
+        
+        USER QUERY: {query}
+        
+        API RESULTS SUMMARY:
+        {result_summary}
+        
+        Decide whether to:
+        A) Use the API trial data to provide specific trial information
+        B) Provide a generalized answer about clinical trials
+        
+        Choose A if:
+        - The API results are relevant to the query
+        - The trials found match what the user is asking about
+        - Specific trial information would be helpful
+        
+        Choose B if:
+        - The API results are not very relevant
+        - The query is too general or vague
+        - A general educational answer would be more appropriate
+        
+        Respond in JSON format:
+        {{
+            "decision": "A" or "B",
+            "reasoning": "brief explanation"
+        }}
+        """
+        
+        try:
+            response = self.run(prompt)
+            # Try to extract JSON from response
+            if '{' in response and '}' in response:
+                json_start = response.find('{')
+                json_end = response.rfind('}') + 1
+                json_str = response[json_start:json_end]
+                decision_data = json.loads(json_str)
+                
+                return {
+                    'use_api_data': decision_data.get('decision') == 'A',
+                    'reasoning': decision_data.get('reasoning', 'LLM decision')
+                }
+        except Exception as e:
+            if self.verbose:
+                print(f"Error in LLM decision: {e}")
+        
+        # Default: use API data if we have results
+        return {
+            'use_api_data': len(api_results) > 0,
+            'reasoning': 'Default decision based on result availability'
+        }
+    
+    def filter_running_trials(self, trials):
+        """
+        Filter and return currently recruiting/active trials
+        """
+        running_statuses = ['recruiting', 'active', 'enrolling by invitation', 'not yet recruiting']
+        running_trials = []
+        
+        for trial in trials:
+            metadata = trial.get('metadata', {})
+            status = metadata.get('status', '').lower()
+            
+            if any(running_status in status for running_status in running_statuses):
+                running_trials.append(trial)
+        
+        return running_trials
+    
+    def generate_trial_suggestions(self, query, running_trials):
+        """
+        Generate suggestions for running trials using LLM
+        Returns formatted suggestions with trial suitability analysis
+        """
+        if not running_trials:
+            return "No currently recruiting trials found."
+        
+        # Prepare trial information
+        trial_info = ""
+        for i, trial in enumerate(running_trials[:10], 1):  # Limit to top 10
+            metadata = trial.get('metadata', {})
+            prediction = self.predict_enrollment_success(metadata)
+            
+            trial_info += f"""
+Trial {i}: {metadata.get('nct_id', 'N/A')}
+- Title: {metadata.get('title', 'N/A')}
+- Status: {metadata.get('status', 'N/A')}
+- Phase: {metadata.get('phase', 'N/A')}
+- Conditions: {metadata.get('conditions', 'N/A')}
+- Enrollment Success Prediction: {prediction['emoji']} {prediction['score']}% - {prediction['category']}
+- Eligibility (brief): {metadata.get('eligibility_criteria', 'N/A')[:200]}...
+"""
+        
+        prompt = f"""
+        Based on the user's query and the following currently recruiting clinical trials, 
+        provide suggestions about which trials might be most suitable.
+        
+        USER QUERY: {query}
+        
+        CURRENTLY RECRUITING TRIALS:
+        {trial_info}
+        
+        Provide:
+        1. A brief overview of the recruiting trials found
+        2. For each trial, a suggestion about its suitability (consider enrollment success prediction, phase, conditions)
+        3. Key factors patients should consider when choosing a trial
+        
+        Format your response in a clear, patient-friendly manner with bullet points.
+        """
+        
+        try:
+            suggestions = self.run(prompt)
+            return suggestions
+        except Exception as e:
+            if self.verbose:
+                print(f"Error generating suggestions: {e}")
+            
+            # Fallback: simple list
+            fallback = f"**Currently Recruiting Trials ({len(running_trials)} found):**\n\n"
+            for i, trial in enumerate(running_trials[:10], 1):
+                meta = trial.get('metadata', {})
+                pred = self.predict_enrollment_success(meta)
+                fallback += f"{i}. **{meta.get('nct_id', 'N/A')}** - {meta.get('title', 'N/A')}\n"
+                fallback += f"   - Status: {meta.get('status', 'N/A')}\n"
+                fallback += f"   - Success Prediction: {pred['emoji']} {pred['score']}%\n\n"
+            
+            return fallback
+
+    
     def search_clinical_trials(self, search_term, search_type="auto", top_k=5):
         # Convert search_term to string if it's not already
         if isinstance(search_term, (np.ndarray, list)):
@@ -385,8 +632,61 @@ class EnrollmentAgent(LLMAgent):
     def analyze_enrollment(self, search_term, search_type="auto", context=None):
         """
         Analyze enrollment patterns for clinical trials based on search results
+        Enhanced with API fallback and running trial suggestions
         """
+        # First try local search
         trials = self.search_clinical_trials(search_term, search_type, top_k=5)
+        
+        # Assess if local results are sufficient
+        results_sufficient = self.assess_search_results(trials)
+        
+        # If local results are insufficient, try API
+        if not results_sufficient:
+            if self.verbose:
+                print(f"Local results insufficient, fetching from ClinicalTrials.gov API...")
+            
+            api_trials = self.fetch_from_clinicaltrials_api(search_term, page_size=100)
+            
+            if api_trials:
+                # Use LLM to decide response strategy
+                decision = self.decide_response_strategy(search_term, api_trials)
+                
+                if decision['use_api_data']:
+                    # Use API results
+                    trials = api_trials[:10]  # Limit to top 10 for analysis
+                    if self.verbose:
+                        print(f"Using API data: {decision['reasoning']}")
+                else:
+                    # Provide generalized answer
+                    if self.verbose:
+                        print(f"Providing generalized answer: {decision['reasoning']}")
+                    
+                    return f"""
+**Clinical Trial Enrollment Information**
+
+Based on your query about "{search_term}", here's general information about clinical trial enrollment:
+
+Clinical trials are research studies that test new medical approaches in people. To participate in a clinical trial, you must meet specific eligibility criteria which typically include:
+
+- **Medical Condition**: Having the specific disease or condition being studied
+- **Age Requirements**: Being within a certain age range
+- **Health Status**: Meeting certain health criteria (e.g., organ function, previous treatments)
+- **Geographic Location**: Being able to travel to the study site
+
+**Finding Relevant Trials:**
+
+While we found {len(api_trials)} trials in the ClinicalTrials.gov database related to your search, they may have varying levels of relevance. We recommend:
+
+1. Visit ClinicalTrials.gov directly and search for "{search_term}"
+2. Consult with your healthcare provider about trial participation
+3. Contact trial coordinators to discuss eligibility in detail
+
+**Currently Recruiting Trials:**
+
+{self._format_running_trials_summary(api_trials)}
+
+For more specific information, please refine your search or consult with a healthcare professional.
+"""
         
         if not trials:
             return f"No clinical trials found for search term: '{search_term}'"
@@ -404,6 +704,7 @@ class EnrollmentAgent(LLMAgent):
             
             summary = f"""
             Trial {i} (NCT ID: {metadata.get('nct_id', 'N/A')}):
+            - Title: {metadata.get('title', metadata.get('disease', 'N/A'))}
             - Disease: {metadata.get('disease', 'N/A')}
             - Status: {metadata.get('status', 'N/A')}
             - Phase: {metadata.get('phase', 'N/A')}
@@ -418,6 +719,9 @@ class EnrollmentAgent(LLMAgent):
                 summary += f"\n            - Similarity Score: {trial.get('similarity_score', 0):.3f}"
             
             trial_summaries.append(summary)
+        
+        # Filter running trials
+        running_trials = self.filter_running_trials(trials)
         
         analysis_context = context or search_term
         
@@ -479,7 +783,7 @@ class EnrollmentAgent(LLMAgent):
             # Fallback: Generate response from data directly
             avg_score = sum(p['score'] for p in success_predictions) / len(success_predictions)
             
-            fallback_response = f"""
+            response = f"""
 **PATIENT-FRIENDLY SUMMARY**
 
 I found {len(trials)} clinical research studies related to {analysis_context}. Here's what the enrollment data shows:
@@ -492,9 +796,9 @@ Key findings from the enrollment analysis:
             # Add trial-by-trial summary
             for i, (trial, pred) in enumerate(zip(trials, success_predictions), 1):
                 meta = trial.get('metadata', {})
-                fallback_response += f"\n- Study {i} ({meta.get('nct_id', 'N/A')}): {pred['emoji']} {pred['score']}% success rate - Status: {meta.get('status', 'N/A')}, Phase: {meta.get('phase', 'N/A')}"
+                response += f"\n- Study {i} ({meta.get('nct_id', 'N/A')}): {pred['emoji']} {pred['score']}% success rate - Status: {meta.get('status', 'N/A')}, Phase: {meta.get('phase', 'N/A')}"
             
-            fallback_response += f"""
+            response += f"""
 
 Most studies are looking for participants who meet specific medical criteria related to {analysis_context}. The studies with higher success rates tend to be in later phases (Phase 3/4) and are currently active in recruitment.
 
@@ -505,22 +809,63 @@ Most studies are looking for participants who meet specific medical criteria rel
 Success Rate Distribution:
 """
             for i, pred in enumerate(success_predictions, 1):
-                fallback_response += f"\n   Study {i}: {pred['score']}% - {pred['category']}"
+                response += f"\n   Study {i}: {pred['score']}% - {pred['category']}"
                 for factor in pred['factors']:
-                    fallback_response += f"\n      {factor}"
+                    response += f"\n      {factor}"
             
-            fallback_response += "\n\n2. **Study Status Overview**\n"
+            response += "\n\n2. **Study Status Overview**\n"
             statuses = {}
             for trial in trials:
                 status = trial.get('metadata', {}).get('status', 'Unknown')
                 statuses[status] = statuses.get(status, 0) + 1
             
             for status, count in statuses.items():
-                fallback_response += f"   - {status}: {count} studies\n"
+                response += f"   - {status}: {count} studies\n"
+        
+        # Add running trials section
+        if running_trials:
+            response += f"\n\n---\n\n## 🟢 CURRENTLY RECRUITING TRIALS ({len(running_trials)} Active)\n\n"
             
-            return fallback_response
+            # Generate suggestions for running trials
+            suggestions = self.generate_trial_suggestions(search_term, running_trials)
+            response += suggestions
+            
+            # Add detailed list of running trials
+            response += f"\n\n**Detailed Information on Active Trials:**\n\n"
+            for i, trial in enumerate(running_trials[:10], 1):
+                meta = trial.get('metadata', {})
+                pred = self.predict_enrollment_success(meta)
+                response += f"""
+**{i}. {meta.get('nct_id', 'N/A')}** - {meta.get('title', meta.get('disease', 'N/A'))}
+- **Status:** {meta.get('status', 'N/A')}
+- **Phase:** {meta.get('phase', 'N/A')}
+- **Conditions:** {meta.get('conditions', 'N/A')}
+- **Enrollment Success:** {pred['emoji']} {pred['score']}% ({pred['category']})
+- **Study Type:** {meta.get('study_type', 'N/A')}
+
+"""
+        else:
+            response += "\n\n---\n\n**Note:** No currently recruiting trials found in this dataset. Trials may be completed, terminated, or not yet recruiting.\n"
         
         return response
+    
+    def _format_running_trials_summary(self, trials):
+        """Helper method to format running trials summary"""
+        running = self.filter_running_trials(trials)
+        if not running:
+            return "No currently recruiting trials found in the results."
+        
+        summary = f"Found {len(running)} currently recruiting trials:\n\n"
+        for i, trial in enumerate(running[:5], 1):
+            meta = trial.get('metadata', {})
+            summary += f"{i}. **{meta.get('nct_id', 'N/A')}** - {meta.get('title', meta.get('disease', 'N/A')[:60])}...\n"
+            summary += f"   Status: {meta.get('status', 'N/A')}\n\n"
+        
+        if len(running) > 5:
+            summary += f"...and {len(running) - 5} more recruiting trials.\n"
+        
+        return summary
+
     
     def get_trial_details(self, nct_id):
         """Get detailed information about a specific trial by NCT ID"""

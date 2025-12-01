@@ -1,15 +1,3 @@
-"""
-Async MongoDB storage layer for chat memory, audit logs, and backups.
-
-Environment variables:
-- MONGODB_URI: MongoDB connection string
-- MONGODB_DB: Database name (default: ClinicalAgents)
-
-Collections:
-- chat_memory: per-turn chat messages and agent outputs
-- audit_logs: detailed event logs across the pipeline
-- backups: periodic session snapshots for rollback
-"""
 from __future__ import annotations
 
 import os
@@ -35,36 +23,57 @@ class AsyncMongoStore:
         self._db: Optional[Any] = None
         self._lock = asyncio.Lock()
         self._indexes_created = False
+        self._mongo_available = self._uri is not None
+        self._connection_failed = False
 
     async def _ensure_connected(self):
+        # If MongoDB is not configured or connection previously failed, skip
+        if not self._mongo_available:
+            return False
+        if self._connection_failed:
+            return False
+            
         if (self._client is not None) and (self._db is not None):
-            return
+            return True
+            
         async with self._lock:
             if (self._client is not None) and (self._db is not None):
-                return
+                return True
+                
             try:
                 from motor.motor_asyncio import AsyncIOMotorClient as _Client  # type: ignore
             except Exception as _e:  # pragma: no cover
-                raise RuntimeError("motor is not installed. Add 'motor' to requirements.txt and install it.")
-            # Reduced timeout and connection pooling
-            self._client = _Client(
-                self._uri,
-                serverSelectionTimeoutMS=2000,  # Reduced from 5s to 2s
-                connectTimeoutMS=2000,
-                socketTimeoutMS=5000,
-                maxPoolSize=10,
-                minPoolSize=1
-            )
-            # Trigger a ping to verify connection with timeout
+                print("⚠️  Warning: motor is not installed. MongoDB features disabled.")
+                self._connection_failed = True
+                return False
+                
             try:
+                # Reduced timeout and connection pooling
+                self._client = _Client(
+                    self._uri,
+                    serverSelectionTimeoutMS=2000,  # Reduced from 5s to 2s
+                    connectTimeoutMS=2000,
+                    socketTimeoutMS=5000,
+                    maxPoolSize=10,
+                    minPoolSize=1
+                )
+                # Trigger a ping to verify connection with timeout
                 await asyncio.wait_for(self._client.admin.command("ping"), timeout=2.0)
+                self._db = self._client[self._db_name]
+                # Only create indexes once
+                if not self._indexes_created:
+                    await self._ensure_indexes()
+                    self._indexes_created = True
+                print(f"✓ MongoDB connected to {self._db_name}")
+                return True
             except asyncio.TimeoutError:
-                raise RuntimeError("MongoDB connection timeout - is MongoDB running?")
-            self._db = self._client[self._db_name]
-            # Only create indexes once
-            if not self._indexes_created:
-                await self._ensure_indexes()
-                self._indexes_created = True
+                print("⚠️  Warning: MongoDB connection timeout - running without persistence")
+                self._connection_failed = True
+                return False
+            except Exception as e:
+                print(f"⚠️  Warning: MongoDB connection failed ({str(e)}) - running without persistence")
+                self._connection_failed = True
+                return False
 
     async def _ensure_indexes(self):
         assert self._db is not None
@@ -79,7 +88,8 @@ class AsyncMongoStore:
     # ---------- Chat Memory ----------
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
     async def save_chat_message(self, session_id: str, role: str, content: str, agent_outputs: Optional[Dict[str, Any]] = None) -> str:
-        await self._ensure_connected()
+        if not await self._ensure_connected():
+            return ""  # MongoDB unavailable, skip persistence
         assert self._db is not None
         doc = {
             "session_id": session_id,
@@ -93,7 +103,8 @@ class AsyncMongoStore:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
     async def get_session_history(self, session_id: str) -> List[Dict[str, Any]]:
-        await self._ensure_connected()
+        if not await self._ensure_connected():
+            return []  # MongoDB unavailable, return empty history
         assert self._db is not None
         cursor = self._db["chat_memory"].find({"session_id": session_id}).sort("timestamp", 1)
         docs = [doc async for doc in cursor]
@@ -108,7 +119,8 @@ class AsyncMongoStore:
     # ---------- Audit Logs ----------
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
     async def log_event(self, session_id: str, event: str, agent_name: str, content: Dict[str, Any], status: str = "info") -> str:
-        await self._ensure_connected()
+        if not await self._ensure_connected():
+            return ""  # MongoDB unavailable, skip logging
         assert self._db is not None
         doc = {
             "session_id": session_id,
@@ -123,7 +135,8 @@ class AsyncMongoStore:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
     async def get_audit_logs(self, session_id: str) -> List[Dict[str, Any]]:
-        await self._ensure_connected()
+        if not await self._ensure_connected():
+            return []  # MongoDB unavailable, return empty logs
         assert self._db is not None
         cursor = self._db["audit_logs"].find({"session_id": session_id}).sort("timestamp", 1)
         docs = [doc async for doc in cursor]
@@ -138,7 +151,8 @@ class AsyncMongoStore:
     # ---------- Backups ----------
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
     async def snapshot_session(self, session_id: str) -> str:
-        await self._ensure_connected()
+        if not await self._ensure_connected():
+            return ""  # MongoDB unavailable, skip snapshot
         assert self._db is not None
         history = await self.get_session_history(session_id)
         audits = await self.get_audit_logs(session_id)
@@ -153,7 +167,8 @@ class AsyncMongoStore:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
     async def list_sessions(self, limit: int = 50) -> List[str]:
-        await self._ensure_connected()
+        if not await self._ensure_connected():
+            return []  # MongoDB unavailable, return empty list
         assert self._db is not None
         # Distinct can be expensive; for small scale it's acceptable
         sessions = await self._db["chat_memory"].distinct("session_id")

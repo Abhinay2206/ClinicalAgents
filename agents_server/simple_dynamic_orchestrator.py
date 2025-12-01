@@ -80,13 +80,17 @@ class SimpleDynamicOrchestrator:
         # Agent capabilities mapping
         self.agent_capabilities = {
             "enrollment": {
-                "keywords": ["enroll", "recruitment", "recruit", "participant", "patient", "eligibility", "criteria", 
+                "keywords": ["enroll", "enrollment", "recruitment", "recruit", "participant", "patient", "eligibility", "criteria", 
                            "demographic", "population", "how many", "number of", "ratio", "percentage", "enrolled",
                            "success rate", "enrollment success", "recruitment success", "trial success rate",
                            "chances of enrollment", "probability of enrollment", "joining trial", "participate in trial",
-                           "nct", "specific trial", "lookup", "look up", "find trial", "trial details", "study id"],
+                           "nct", "specific trial", "lookup", "look up", "find trial", "trial details", "study id",
+                           "enrollment criteria", "find enrollment", "patient enrollment", "study enrollment", 
+                           "enrollment requirements", "enrollment patterns", "trial enrollment", "clinical trial"],
                 "description": "Analyzes patient enrollment, recruitment patterns, eligibility criteria, demographic data, and enrollment success rates",
-                "priority_keywords": ["enroll", "recruit", "success rate", "enrollment success", "how many", "ratio", "percentage", "nct", "specific trial", "lookup", "look up"]
+                "priority_keywords": ["enrollment", "enrollment criteria", "enrollment requirements", "enroll", "recruit", 
+                                    "success rate", "enrollment success", "how many", "ratio", "percentage", "nct", 
+                                    "specific trial", "lookup", "look up", "find enrollment"]
             },
             "efficacy": {
                 "keywords": ["efficacy", "effectiveness", "effective", "outcome", "result", "response", "treatment outcome", 
@@ -287,6 +291,55 @@ class SimpleDynamicOrchestrator:
         
         return info
     
+    def extract_entities_with_llm(self, query: str) -> Dict[str, str]:
+        """
+        Use LLM to extract drug and disease names from natural language queries
+        This is a fallback when regex-based extraction fails
+        """
+        extraction_prompt = f"""
+        Extract the drug name and/or disease/condition name from the following query.
+        Return ONLY the extracted entities in this exact format:
+        
+        DRUG: <drug_name or NONE>
+        DISEASE: <disease_name or NONE>
+        
+        Rules:
+        - Extract only the actual drug or disease name, not the entire query
+        - If no drug is mentioned, write "NONE" for DRUG
+        - If no disease is mentioned, write "NONE" for DISEASE
+        - Use generic drug names when possible
+        - Keep names concise (1-3 words maximum)
+        
+        Query: {query}
+        
+        Extracted entities:
+        """
+        
+        try:
+            response = self.llm.generate(extraction_prompt)
+            result_text = response.strip()
+            
+            info = {}
+            
+            # Parse the LLM response
+            for line in result_text.split('\n'):
+                line = line.strip()
+                if line.startswith('DRUG:'):
+                    drug = line.replace('DRUG:', '').strip()
+                    if drug and drug.upper() != 'NONE':
+                        info['drug'] = drug
+                        print(f"LLM extracted drug: {drug}")
+                elif line.startswith('DISEASE:'):
+                    disease = line.replace('DISEASE:', '').strip()
+                    if disease and disease.upper() != 'NONE':
+                        info['condition'] = disease
+                        print(f"LLM extracted disease: {disease}")
+            
+            return info
+        except Exception as e:
+            print(f"LLM extraction failed: {e}")
+            return {}
+    
     def execute_agent_analysis(self, agent_name: str, query: str, clinical_info: Dict[str, str]) -> Dict[str, Any]:
         """
         Execute analysis for a specific agent
@@ -353,8 +406,22 @@ class SimpleDynamicOrchestrator:
                     analysis_kwargs['analysis_type'] = 'disease'
                     print(f"Using disease analysis for {agent_name}: {clinical_info['condition']}")
                 else:
-                    # Let the agent auto-detect
-                    print(f"Using auto-detection for {agent_name}: {agent_query}")
+                    # Fallback: Use LLM to extract entities from the query
+                    print(f"No entities found via regex, attempting LLM extraction...")
+                    llm_extracted = self.extract_entities_with_llm(query)
+                    
+                    if 'drug' in llm_extracted:
+                        agent_query = llm_extracted['drug']
+                        analysis_kwargs['analysis_type'] = 'drug'
+                        print(f"LLM extracted drug for {agent_name}: {llm_extracted['drug']}")
+                    elif 'condition' in llm_extracted:
+                        agent_query = llm_extracted['condition']
+                        analysis_kwargs['analysis_type'] = 'disease'
+                        print(f"LLM extracted disease for {agent_name}: {llm_extracted['condition']}")
+                    else:
+                        # Last resort: use original query but warn
+                        print(f"⚠️ WARNING: Could not extract drug/disease name, using full query: {agent_query}")
+                        print(f"⚠️ This may cause FDA API to fail. Consider improving the query.")
                 
                 result = agent.analyze(agent_query, **analysis_kwargs)
             

@@ -9,16 +9,9 @@ export function useChat(sessionId, updateSessionTitle) {
   const [error, setError] = useState(null);
 
   // Load history when session changes
-  useEffect(() => {
-    if (sessionId) {
-      loadHistory(sessionId);
-    } else {
-      setMessages([]);
-    }
-  }, [sessionId]);
-
-  const loadHistory = async (sid) => {
+  const loadHistory = useCallback(async (sid) => {
     try {
+      setIsLoading(true);
       const data = await chatService.getHistory(sid);
       // Backend returns { session_id, history: [...messages], audit_logs: [...] }
       if (data && data.history && Array.isArray(data.history)) {
@@ -36,12 +29,27 @@ export function useChat(sessionId, updateSessionTitle) {
           },
         }));
         setMessages(transformedMessages);
+      } else {
+        // Empty history is OK, just set empty messages
+        setMessages([]);
       }
     } catch (err) {
       console.error('Failed to load history:', err);
-      // Don't show error to user for history loading failures
+      // Show error to user if history loading fails
+      setError(`Failed to load chat history: ${err.message}`);
+      setMessages([]);
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (sessionId) {
+      loadHistory(sessionId);
+    } else {
+      setMessages([]);
+    }
+  }, [sessionId, loadHistory]);
 
   const sendMessage = useCallback(async (content) => {
     if (!content.trim()) return;
@@ -53,26 +61,28 @@ export function useChat(sessionId, updateSessionTitle) {
       content,
       timestamp: new Date().toISOString(),
     };
-    
+
     setMessages(prev => {
       const newMessages = [...prev, userMessage];
-      
+
       // If this is the first message, generate and update session title
       if (newMessages.length === 1 && updateSessionTitle && sessionId) {
         // Use smart title generation
         const title = chatService.generateChatTitle(content);
         updateSessionTitle(sessionId, title);
       }
-      
+
       return newMessages;
     });
-    
+
     setIsLoading(true);
     setError(null);
 
     try {
       const response = await chatService.sendMessage(content, sessionId);
-      
+
+      console.log('📥 Received response from backend:', response);
+
       // Parse agent response - backend returns "final_output"
       const assistantMessage = {
         id: Date.now() + 1,
@@ -87,12 +97,17 @@ export function useChat(sessionId, updateSessionTitle) {
           used_agents: response.reasoner?.used_agents || [],
         },
       };
-      
-      setMessages(prev => [...prev, assistantMessage]);
+
+      console.log('✅ Adding assistant message to state:', assistantMessage);
+      setMessages(prev => {
+        const newMessages = [...prev, assistantMessage];
+        console.log('📝 Updated messages array:', newMessages);
+        return newMessages;
+      });
     } catch (err) {
       console.error('Chat error:', err);
       setError(err.message || 'Failed to send message. Please try again.');
-      
+
       // Add error message
       const errorMessage = {
         id: Date.now() + 1,

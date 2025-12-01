@@ -76,23 +76,51 @@ async def health() -> Dict[str, Any]:
 async def chat(req: ChatRequest):
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt is required")
-    proxy = _new_proxy(session_id=req.session_id)
-    result = await proxy.handle_user_prompt_async(req.prompt)
-    return result
+    
+    try:
+        proxy = _new_proxy(session_id=req.session_id)
+        result = await proxy.handle_user_prompt_async(req.prompt)
+        return result
+    except Exception as e:
+        print(f"❌ Chat error: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to process chat request: {str(e)}"
+        )
 
 
 @app.get("/history/{session_id}")
 async def history(session_id: str):
-    proxy = _new_proxy(session_id=session_id)
-    data = await proxy.fetch_session_history(session_id)
-    return data
+    if not session_id or not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id is required")
+    
+    try:
+        proxy = _new_proxy(session_id=session_id)
+        data = await proxy.fetch_session_history(session_id)
+        return data
+    except Exception as e:
+        print(f"❌ History error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch history: {str(e)}"
+        )
 
 
 @app.get("/replay/{session_id}")
 async def replay(session_id: str):
-    proxy = _new_proxy(session_id=session_id)
-    data = await proxy.replay_session(session_id)
-    return data
+    if not session_id or not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id is required")
+    
+    try:
+        proxy = _new_proxy(session_id=session_id)
+        data = await proxy.replay_session(session_id)
+        return data
+    except Exception as e:
+        print(f"❌ Replay error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to replay session: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

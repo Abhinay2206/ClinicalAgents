@@ -215,7 +215,45 @@ class SafetyAgent(LLMAgent):
         return self.run(prompt)
 
     def analyze(self, query, analysis_type="auto"):
+        """
+        Main analysis method that routes to drug or disease analysis
+        Extracts clean entity names from queries before processing
+        """
+        # Clean the query - remove common prefixes that might be in the query
+        clean_query = query.strip()
         
+        # Remove common question patterns to get just the entity name
+        patterns_to_remove = [
+            r'^review clinical safety profile for:\s*',
+            r'^analyze safety (of|for)\s*',
+            r'^what (are|is) the (side effects?|safety|risks?) (of|for)\s*',
+            r'^is\s+.*?\s+safe(\s+for)?',
+            r'^safety (of|for)\s*',
+            r'^\s*provide.*?for:\s*',
+        ]
+        
+        import re
+        for pattern in patterns_to_remove:
+            clean_query = re.sub(pattern, '', clean_query, flags=re.IGNORECASE).strip()
+        
+        # Remove trailing question marks and extra whitespace
+        clean_query = clean_query.rstrip('?').strip()
+        
+        # If the cleaned query is too long (>50 chars), it's likely still a full sentence
+        # In this case, try to extract just the drug/disease name
+        if len(clean_query) > 50:
+            print(f"⚠️ Query seems too long ({len(clean_query)} chars), attempting to extract entity...")
+            # Try to find drug/disease name in the query
+            words = clean_query.split()
+            # Take the first few meaningful words (skip common words)
+            skip_words = {'the', 'a', 'an', 'for', 'in', 'on', 'with', 'patients', 'patient', 'people'}
+            meaningful_words = [w for w in words if w.lower() not in skip_words]
+            if meaningful_words:
+                # Take first 1-3 words as the likely entity name
+                clean_query = ' '.join(meaningful_words[:3])
+                print(f"Extracted entity: {clean_query}")
+        
+        print(f"Safety agent analyzing: '{clean_query}' (type: {analysis_type})")
         
         # Auto-detect analysis type if not specified
         if analysis_type == "auto":
@@ -227,16 +265,16 @@ class SafetyAgent(LLMAgent):
                 'alzheimer', 'parkinson', 'schizophrenia', 'bipolar', 'pain', 'fever'
             ]
             
-            query_lower = query.lower()
+            query_lower = clean_query.lower()
             if any(keyword in query_lower for keyword in disease_keywords):
                 analysis_type = "disease"
             else:
                 analysis_type = "drug"
         
         if analysis_type == "drug":
-            return self.analyze_drug_safety(query)
+            return self.analyze_drug_safety(clean_query)
         elif analysis_type == "disease":
-            return self.analyze_drugs_for_disease(query)
+            return self.analyze_drugs_for_disease(clean_query)
         else:
             return f"Unknown analysis type: {analysis_type}. Use 'drug' or 'disease'."
 
