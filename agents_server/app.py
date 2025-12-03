@@ -254,6 +254,53 @@ async def delete_session(
         )
 
 
+class SessionUpdate(BaseModel):
+    title: str
+
+
+@app.patch("/sessions/{session_id}")
+async def update_session(
+    session_id: str,
+    update_data: SessionUpdate,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Update a session (e.g., title)"""
+    try:
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this session"
+            )
+        
+        # Update session title
+        success = await _mongo_store.update_session_title(session_id, update_data.title)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update session"
+            )
+        
+        # Return updated session
+        updated_session = await _mongo_store.get_session_by_id(session_id)
+        return SessionResponse(**updated_session)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Update session error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update session: {str(e)}"
+        )
+
+
 # ---------- Chat Endpoints (Updated with Authentication) ----------
 
 @app.post("/chat")
@@ -295,9 +342,9 @@ async def chat(
             content=req.prompt
         )
         
-        # Process with proxy
+        # Process with proxy (pass user_id for memory integration)
         proxy = _new_proxy(session_id=session_id)
-        result = await proxy.handle_user_prompt_async(req.prompt)
+        result = await proxy.handle_user_prompt_async(req.prompt, user_id=current_user.id)
         
         # Save assistant response with user_id
         await _mongo_store.save_chat_message_with_user(
@@ -319,6 +366,7 @@ async def chat(
             status_code=500, 
             detail=f"Failed to process chat request: {str(e)}"
         )
+
 
 
 @app.get("/history/{session_id}")
@@ -398,6 +446,265 @@ async def replay(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to replay session: {str(e)}"
+        )
+
+
+# ---------- Feedback Endpoints ----------
+
+class FeedbackSubmit(BaseModel):
+    message_id: str
+    feedback_type: str  # "thumbs_up", "thumbs_down", "correction", "rating"
+    rating: Optional[int] = None  # 1-5 for rating type
+    correction_text: Optional[str] = None  # For correction type
+    comment: Optional[str] = None
+
+
+@app.post("/feedback")
+async def submit_feedback(
+    feedback: FeedbackSubmit,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Submit feedback on an agent response"""
+    try:
+        from feedback_manager import FeedbackManager
+        
+        feedback_manager = FeedbackManager(store=_mongo_store, llm=_llm_client)
+        
+        # Get message to find session_id
+        message = await _mongo_store.get_message_by_id(feedback.message_id)
+        if not message:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Message not found"
+            )
+        
+        session_id = message.get("session_id")
+        
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session or session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to provide feedback on this message"
+            )
+        
+        # Collect feedback
+        feedback_data = {
+            "rating": feedback.rating,
+            "correction_text": feedback.correction_text,
+            "comment": feedback.comment
+        }
+        
+        feedback_id = await feedback_manager.collect_feedback(
+            session_id=session_id,
+            user_id=current_user.id,
+            message_id=feedback.message_id,
+            feedback_type=feedback.feedback_type,
+            feedback_data=feedback_data
+        )
+        
+        return {
+            "feedback_id": feedback_id,
+            "message": "Feedback submitted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Feedback error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit feedback: {str(e)}"
+        )
+
+
+@app.get("/feedback/{session_id}")
+async def get_feedback(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Get feedback history for a session"""
+    try:
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session"
+            )
+        
+        feedback = await _mongo_store.get_session_feedback(session_id)
+        return {"feedback": feedback}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Get feedback error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get feedback: {str(e)}"
+        )
+
+
+# ---------- Memory Endpoints ----------
+
+@app.get("/memory/{session_id}")
+async def get_memory(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Get memory state for a session"""
+    try:
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session"
+            )
+        
+        memory_states = await _mongo_store.get_memory_state(session_id, limit=20)
+        summary = await _mongo_store.get_conversation_summary(session_id)
+        
+        return {
+            "memory_states": memory_states,
+            "summary": summary
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Get memory error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get memory: {str(e)}"
+        )
+
+
+@app.post("/memory/clear/{session_id}")
+async def clear_memory(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Clear memory for a session"""
+    try:
+        # Verify session belongs to user
+        session = await _mongo_store.get_session_by_id(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to modify this session"
+            )
+        
+        success = await _mongo_store.clear_memory_state(session_id)
+        
+        return {
+            "success": success,
+            "message": "Memory cleared successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Clear memory error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear memory: {str(e)}"
+        )
+
+
+# ---------- Preferences Endpoints ----------
+
+class PreferencesUpdate(BaseModel):
+    response_style: Optional[str] = None  # "technical", "simple", "balanced"
+    preferred_agents: Optional[List[str]] = None
+    excluded_topics: Optional[List[str]] = None
+    language_level: Optional[str] = None  # "expert", "intermediate", "beginner"
+
+
+@app.get("/preferences")
+async def get_preferences(current_user: UserResponse = Depends(get_current_user_with_store)):
+    """Get user preferences"""
+    try:
+        preferences = await _mongo_store.get_user_preferences(current_user.id)
+        
+        if not preferences:
+            # Return default preferences
+            return {
+                "preferences": {
+                    "response_style": "balanced",
+                    "preferred_agents": [],
+                    "excluded_topics": [],
+                    "language_level": "intermediate"
+                }
+            }
+        
+        return preferences
+    except Exception as e:
+        print(f"❌ Get preferences error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get preferences: {str(e)}"
+        )
+
+
+@app.put("/preferences")
+async def update_preferences(
+    prefs: PreferencesUpdate,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """Update user preferences"""
+    try:
+        # Build preferences dict from non-None values
+        preferences = {}
+        if prefs.response_style is not None:
+            preferences["response_style"] = prefs.response_style
+        if prefs.preferred_agents is not None:
+            preferences["preferred_agents"] = prefs.preferred_agents
+        if prefs.excluded_topics is not None:
+            preferences["excluded_topics"] = prefs.excluded_topics
+        if prefs.language_level is not None:
+            preferences["language_level"] = prefs.language_level
+        
+        if not preferences:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No preferences provided"
+            )
+        
+        # Get existing preferences and merge
+        existing = await _mongo_store.get_user_preferences(current_user.id)
+        if existing and "preferences" in existing:
+            existing["preferences"].update(preferences)
+            preferences = existing["preferences"]
+        
+        success = await _mongo_store.update_user_preferences(current_user.id, preferences)
+        
+        return {
+            "success": success,
+            "preferences": preferences
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Update preferences error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update preferences: {str(e)}"
         )
 
 

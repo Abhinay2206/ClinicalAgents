@@ -12,11 +12,11 @@ export default function ChatInterface() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const { sessions, currentSessionId, createNewSession, switchSession, deleteSession, updateSessionTitle } = useSessions();
+  const { sessions, currentSessionId, createNewSession, switchSession, deleteSession, updateSessionTitle, setCurrentSessionId } = useSessions();
   const { messages, isLoading, error, sendMessage, clearMessages } = useChat(currentSessionId, updateSessionTitle);
 
-  const handleNewChat = () => {
-    const newSessionId = createNewSession();
+  const handleNewChat = async () => {
+    const newSessionId = await createNewSession();
     clearMessages();
   };
 
@@ -26,6 +26,16 @@ export default function ChatInterface() {
 
   const handleDeleteSession = (sessionId) => {
     deleteSession(sessionId);
+  };
+
+  // Wrap sendMessage to create session if needed
+  const handleSendMessage = async (content) => {
+    if (!currentSessionId) {
+      // Create a new session before sending the first message
+      const newSessionId = await createNewSession();
+      // The sendMessage will use the new session ID via the hook
+    }
+    await sendMessage(content);
   };
 
   useEffect(() => {
@@ -52,7 +62,7 @@ export default function ChatInterface() {
         messages={messages}
         isLoading={isLoading}
         error={error}
-        onSendMessage={sendMessage}
+        onSendMessage={handleSendMessage}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         isSidebarOpen={isSidebarOpen}
         onOpenSettings={() => setIsSettingsOpen(true)}

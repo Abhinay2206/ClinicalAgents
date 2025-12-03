@@ -27,25 +27,14 @@ export function useSessions() {
         const userSessions = await chatService.getSessions();
         setSessions(userSessions);
 
-        // Set current session to the most recent one
-        if (userSessions.length > 0) {
-          setCurrentSessionId(userSessions[0].id);
-        } else {
-          // Create a default session if none exist
-          const newSession = await chatService.createSession('New Chat');
-          setSessions([newSession]);
-          setCurrentSessionId(newSession.id);
-        }
+        // Don't auto-select any session - start with empty chat
+        // Users can click on a session to load it, or create a new one
+        setCurrentSessionId(null);
       } catch (err) {
         console.error('Failed to load sessions:', err);
-        // If loading fails, create a new session
-        try {
-          const newSession = await chatService.createSession('New Chat');
-          setSessions([newSession]);
-          setCurrentSessionId(newSession.id);
-        } catch (createErr) {
-          console.error('Failed to create session:', createErr);
-        }
+        // If loading fails, just set empty state
+        setSessions([]);
+        setCurrentSessionId(null);
       } finally {
         setIsLoading(false);
       }
@@ -121,5 +110,6 @@ export function useSessions() {
     deleteSession,
     updateSessionTitle,
     refreshSessions,
+    setCurrentSessionId,
   };
 }

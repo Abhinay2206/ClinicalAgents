@@ -263,6 +263,17 @@ class ChatService {
       throw new Error(error.response?.data?.detail || error.message || 'Failed to delete session');
     }
   }
+
+  async updateSessionTitle(sessionId, title) {
+    try {
+      const response = await apiClient.patch(`/sessions/${sessionId}`, { title });
+      return response.data;
+    } catch (error) {
+      console.error('Update session title error:', error);
+      throw new Error(error.response?.data?.detail || error.message || 'Failed to update session title');
+    }
+  }
+
 }
 
 export const chatService = new ChatService();

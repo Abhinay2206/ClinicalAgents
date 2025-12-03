@@ -66,10 +66,25 @@ export function useChat(sessionId, updateSessionTitle) {
       const newMessages = [...prev, userMessage];
 
       // If this is the first message, generate and update session title
-      if (newMessages.length === 1 && updateSessionTitle && sessionId) {
+      if (newMessages.length === 1 && sessionId) {
         // Use smart title generation
         const title = chatService.generateChatTitle(content);
-        updateSessionTitle(sessionId, title);
+
+        // Persist title to backend
+        chatService.updateSessionTitle(sessionId, title)
+          .then(() => {
+            // Update local state after successful backend update
+            if (updateSessionTitle) {
+              updateSessionTitle(sessionId, title);
+            }
+          })
+          .catch(err => {
+            console.error('Failed to update session title:', err);
+            // Still update local state even if backend fails
+            if (updateSessionTitle) {
+              updateSessionTitle(sessionId, title);
+            }
+          });
       }
 
       return newMessages;

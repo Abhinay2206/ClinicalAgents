@@ -91,6 +91,26 @@ class AsyncMongoStore:
         # Audit logs
         await self._db["audit_logs"].create_index([("session_id", 1), ("timestamp", 1)])
         await self._db["backups"].create_index([("session_id", 1), ("created_at", 1)])
+        
+        # Memory state indexes
+        await self._db["memory_state"].create_index([("session_id", 1), ("timestamp", -1)])
+        await self._db["memory_state"].create_index([("user_id", 1), ("timestamp", -1)])
+        
+        # Conversation summaries
+        await self._db["conversation_summaries"].create_index([("session_id", 1)], unique=True)
+        
+        # User preferences
+        await self._db["user_preferences"].create_index([("user_id", 1)], unique=True)
+        
+        # Feedback indexes
+        await self._db["feedback"].create_index([("session_id", 1), ("timestamp", -1)])
+        await self._db["feedback"].create_index([("user_id", 1), ("timestamp", -1)])
+        await self._db["feedback"].create_index([("agent_name", 1), ("feedback_type", 1)])
+        
+        # Learned patterns indexes
+        await self._db["learned_patterns"].create_index([("agent_name", 1), ("pattern_type", 1)])
+        await self._db["learned_patterns"].create_index([("confidence", -1)])
+
 
     @property
     def db_name(self) -> str:
@@ -360,3 +380,317 @@ class AsyncMongoStore:
                 doc["timestamp"] = doc["timestamp"].isoformat()
         
         return docs
+
+    # ---------- Memory State Management ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def save_memory_state(self, session_id: str, memory_data: Dict[str, Any]) -> str:
+        """Save memory state for a session"""
+        if not await self._ensure_connected():
+            return ""
+        assert self._db is not None
+        
+        res = await self._db["memory_state"].insert_one(memory_data)
+        return str(res.inserted_id)
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_memory_state(self, session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent memory states for a session"""
+        if not await self._ensure_connected():
+            return []
+        assert self._db is not None
+        
+        cursor = self._db["memory_state"].find({"session_id": session_id}).sort("timestamp", -1).limit(limit)
+        docs = [doc async for doc in cursor]
+        
+        # Convert ObjectId and datetime to string
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        
+        return docs
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_memory_count(self, session_id: str) -> int:
+        """Get count of memory states for a session"""
+        if not await self._ensure_connected():
+            return 0
+        assert self._db is not None
+        
+        count = await self._db["memory_state"].count_documents({"session_id": session_id})
+        return count
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def clear_memory_state(self, session_id: str) -> bool:
+        """Clear memory state for a session"""
+        if not await self._ensure_connected():
+            return False
+        assert self._db is not None
+        
+        await self._db["memory_state"].delete_many({"session_id": session_id})
+        await self._db["conversation_summaries"].delete_many({"session_id": session_id})
+        return True
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_user_memory_history(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get memory history across all sessions for a user"""
+        if not await self._ensure_connected():
+            return []
+        assert self._db is not None
+        
+        cursor = self._db["memory_state"].find({"user_id": user_id}).sort("timestamp", -1).limit(limit)
+        docs = [doc async for doc in cursor]
+        
+        # Convert ObjectId and datetime to string
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        
+        return docs
+    
+    # ---------- Conversation Summaries ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def save_conversation_summary(self, session_id: str, user_id: str, summary: str) -> str:
+        """Save or update conversation summary"""
+        if not await self._ensure_connected():
+            return ""
+        assert self._db is not None
+        
+        doc = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "summary": summary,
+            "created_at": dt.datetime.utcnow(),
+        }
+        
+        # Upsert - update if exists, insert if not
+        result = await self._db["conversation_summaries"].update_one(
+            {"session_id": session_id},
+            {"$set": doc},
+            upsert=True
+        )
+        
+        return str(result.upserted_id) if result.upserted_id else "updated"
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_conversation_summary(self, session_id: str) -> Optional[str]:
+        """Get conversation summary for a session"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        doc = await self._db["conversation_summaries"].find_one({"session_id": session_id})
+        return doc.get("summary") if doc else None
+    
+    # ---------- User Preferences ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_user_preferences(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user preferences"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        prefs = await self._db["user_preferences"].find_one({"user_id": user_id})
+        if prefs and "_id" in prefs:
+            prefs["_id"] = str(prefs["_id"])
+        return prefs
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def save_user_preference(self, user_id: str, preference_key: str, preference_value: Any) -> bool:
+        """Save or update a user preference"""
+        if not await self._ensure_connected():
+            return False
+        assert self._db is not None
+        
+        # Get existing preferences or create new
+        existing = await self._db["user_preferences"].find_one({"user_id": user_id})
+        
+        if existing:
+            # Update existing preference
+            result = await self._db["user_preferences"].update_one(
+                {"user_id": user_id},
+                {
+                    "$set": {
+                        f"preferences.{preference_key}": preference_value,
+                        "updated_at": dt.datetime.utcnow().isoformat()
+                    }
+                }
+            )
+            return result.modified_count > 0
+        else:
+            # Create new preferences document
+            doc = {
+                "user_id": user_id,
+                "preferences": {preference_key: preference_value},
+                "created_at": dt.datetime.utcnow().isoformat(),
+                "updated_at": dt.datetime.utcnow().isoformat()
+            }
+            await self._db["user_preferences"].insert_one(doc)
+            return True
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def update_user_preferences(self, user_id: str, preferences: Dict[str, Any]) -> bool:
+        """Update multiple user preferences at once"""
+        if not await self._ensure_connected():
+            return False
+        assert self._db is not None
+        
+        result = await self._db["user_preferences"].update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "preferences": preferences,
+                    "updated_at": dt.datetime.utcnow().isoformat()
+                }
+            },
+            upsert=True
+        )
+        
+        return result.modified_count > 0 or result.upserted_id is not None
+
+    # ---------- Feedback Management ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def save_feedback(self, feedback_data: Dict[str, Any]) -> str:
+        """Save user feedback"""
+        if not await self._ensure_connected():
+            return ""
+        assert self._db is not None
+        
+        res = await self._db["feedback"].insert_one(feedback_data)
+        return str(res.inserted_id)
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_feedback_for_agent(self, agent_name: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get feedback for a specific agent"""
+        if not await self._ensure_connected():
+            return []
+        assert self._db is not None
+        
+        cursor = self._db["feedback"].find({"agent_name": agent_name}).sort("timestamp", -1).limit(limit)
+        docs = [doc async for doc in cursor]
+        
+        # Convert ObjectId and datetime to string
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        
+        return docs
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_session_feedback(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get all feedback for a session"""
+        if not await self._ensure_connected():
+            return []
+        assert self._db is not None
+        
+        cursor = self._db["feedback"].find({"session_id": session_id}).sort("timestamp", -1)
+        docs = [doc async for doc in cursor]
+        
+        # Convert ObjectId and datetime to string
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+            if "timestamp" in doc and hasattr(doc["timestamp"], "isoformat"):
+                doc["timestamp"] = doc["timestamp"].isoformat()
+        
+        return docs
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_message_by_id(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific message by ID"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        from bson import ObjectId
+        try:
+            msg = await self._db["chat_memory"].find_one({"_id": ObjectId(message_id)})
+            if msg and "_id" in msg:
+                msg["_id"] = str(msg["_id"])
+            if msg and "timestamp" in msg and hasattr(msg["timestamp"], "isoformat"):
+                msg["timestamp"] = msg["timestamp"].isoformat()
+            return msg
+        except Exception:
+            return None
+    
+    # ---------- Learned Patterns ----------
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def save_learned_pattern(self, pattern_data: Dict[str, Any]) -> str:
+        """Save a learned pattern"""
+        if not await self._ensure_connected():
+            return ""
+        assert self._db is not None
+        
+        # Add agent_name if not present
+        if "agent_name" not in pattern_data:
+            pattern_data["agent_name"] = "unknown"
+        
+        res = await self._db["learned_patterns"].insert_one(pattern_data)
+        return str(res.inserted_id)
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_learned_pattern(self, agent_name: str, query_pattern: str) -> Optional[Dict[str, Any]]:
+        """Get a specific learned pattern"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        pattern = await self._db["learned_patterns"].find_one({
+            "agent_name": agent_name,
+            "query_pattern": query_pattern
+        })
+        
+        if pattern and "_id" in pattern:
+            pattern["_id"] = str(pattern["_id"])
+        
+        return pattern
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_learned_patterns(self, agent_name: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get learned patterns for an agent"""
+        if not await self._ensure_connected():
+            return []
+        assert self._db is not None
+        
+        cursor = self._db["learned_patterns"].find({"agent_name": agent_name}).sort("confidence", -1).limit(limit)
+        docs = [doc async for doc in cursor]
+        
+        # Convert ObjectId to string
+        for doc in docs:
+            if "_id" in doc:
+                doc["_id"] = str(doc["_id"])
+        
+        return docs
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def update_learned_pattern(
+        self,
+        pattern_id: str,
+        learned_response: str,
+        feedback_count: int
+    ) -> bool:
+        """Update a learned pattern with new feedback"""
+        if not await self._ensure_connected():
+            return False
+        assert self._db is not None
+        
+        from bson import ObjectId
+        try:
+            result = await self._db["learned_patterns"].update_one(
+                {"_id": ObjectId(pattern_id)},
+                {
+                    "$set": {
+                        "learned_response": learned_response,
+                        "feedback_count": feedback_count,
+                        "updated_at": dt.datetime.utcnow()
+                    }
+                }
+            )
+            return result.modified_count > 0
+        except Exception:
+            return False

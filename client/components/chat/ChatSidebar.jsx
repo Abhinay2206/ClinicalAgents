@@ -3,25 +3,25 @@
 import { PlusIcon, TrashIcon, ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
 import { formatDistanceToNow } from '@/utils/dateUtils';
 
-export default function ChatSidebar({ 
-  isOpen, 
-  onClose, 
-  sessions, 
+export default function ChatSidebar({
+  isOpen,
+  onClose,
+  sessions,
   currentSessionId,
   onNewChat,
   onSessionSelect,
-  onDeleteSession 
+  onDeleteSession
 }) {
   return (
     <>
       {/* Overlay for mobile */}
       {isOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden animate-fade-in"
           onClick={onClose}
         />
       )}
-      
+
       {/* Compact Sidebar */}
       <div className={`
         fixed lg:static inset-y-0 left-0 z-50
@@ -68,8 +68,8 @@ export default function ChatSidebar({
                   className={`
                     group relative px-3 py-2 rounded-lg cursor-pointer fade-in
                     transition-all duration-150
-                    ${session.id === currentSessionId 
-                      ? 'bg-[var(--bg-secondary)]' 
+                    ${session.id === currentSessionId
+                      ? 'bg-[var(--bg-secondary)]'
                       : 'hover:bg-[var(--bg-secondary)]'
                     }
                   `}
@@ -82,7 +82,7 @@ export default function ChatSidebar({
                         {session.title || 'New Chat'}
                       </p>
                       <p className="text-xs text-[var(--text-tertiary)] mt-0.5">
-                        {formatDistanceToNow(session.createdAt)}
+                        {formatDistanceToNow(session.created_at || session.createdAt)}
                       </p>
                     </div>
                     <button

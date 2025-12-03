@@ -1,5 +1,15 @@
 export function formatDistanceToNow(dateString) {
+  if (!dateString) {
+    return 'Just now';
+  }
+
   const date = new Date(dateString);
+
+  // Check if date is valid
+  if (isNaN(date.getTime())) {
+    return 'Just now';
+  }
+
   const now = new Date();
   const diffInSeconds = Math.floor((now - date) / 1000);
 
@@ -38,18 +48,18 @@ export function formatDistanceToNow(dateString) {
 
 export function formatTime(dateString) {
   const date = new Date(dateString);
-  return date.toLocaleTimeString('en-US', { 
-    hour: 'numeric', 
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
     minute: '2-digit',
-    hour12: true 
+    hour12: true
   });
 }
 
 export function formatDate(dateString) {
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { 
-    year: 'numeric', 
-    month: 'short', 
-    day: 'numeric' 
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
   });
 }
