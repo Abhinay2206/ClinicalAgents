@@ -6,20 +6,27 @@ import ChatInput from './ChatInput';
 import WelcomeScreen from './WelcomeScreen';
 import ErrorCard from './ErrorCard';
 
-export default function ChatMain({ 
-  messages, 
-  isLoading, 
+export default function ChatMain({
+  messages,
+  isLoading,
   error,
-  onSendMessage, 
+  onSendMessage,
   onToggleSidebar,
-  isSidebarOpen 
+  isSidebarOpen,
+  onOpenSettings,
+  onOpenProfile
 }) {
   const hasMessages = messages.length > 0;
 
   return (
     <div className="flex-1 flex flex-col h-screen bg-[var(--bg-primary)]">
       {/* Header */}
-      <ChatHeader onToggleSidebar={onToggleSidebar} isSidebarOpen={isSidebarOpen} />
+      <ChatHeader
+        onToggleSidebar={onToggleSidebar}
+        isSidebarOpen={isSidebarOpen}
+        onOpenSettings={onOpenSettings}
+        onOpenProfile={onOpenProfile}
+      />
 
       {/* Messages Area */}
       <div className="flex-1 overflow-hidden">
@@ -33,8 +40,8 @@ export default function ChatMain({
       </div>
 
       {/* Input Area */}
-      <ChatInput 
-        onSendMessage={onSendMessage} 
+      <ChatInput
+        onSendMessage={onSendMessage}
         isLoading={isLoading}
         showSuggestions={!hasMessages}
       />
