@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from functools import wraps
 
 from fastapi import FastAPI, HTTPException, Depends, status
@@ -29,6 +29,22 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class EnrollmentPredictionRequest(BaseModel):
+    disease: str
+    criteria_text: Optional[str] = ""
+    phase: int = 2
+    target_enrollment: int = 100
+    site_count: int = 5
+    recruitment_duration: int = 12
+
+
+class EnrollmentPredictionResponse(BaseModel):
+    predicted_class: str
+    confidence_scores: Dict[str, float]
+    top_risk_drivers: List[Dict[str, Any]]
+    error: Optional[str] = None
+
+
 load_dotenv()
 app = FastAPI(title="ClinicalAgents API", version="0.1.0")
 
@@ -45,12 +61,13 @@ app.add_middleware(
 _llm_client: Optional[GeminiClient] = None
 _mongo_store: Optional[AsyncMongoStore] = None
 _orchestrator: Optional[SimpleDynamicOrchestrator] = None
+_ml_predictor: Optional[Any] = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize expensive resources once at startup"""
-    global _llm_client, _mongo_store, _orchestrator
+    global _llm_client, _mongo_store, _orchestrator, _ml_predictor
     print("🚀 Initializing application resources...")
     
     # Initialize LLM client (lightweight)
@@ -64,6 +81,19 @@ async def startup_event():
     # Initialize orchestrator with all agents (heavy - do once)
     _orchestrator = SimpleDynamicOrchestrator(_llm_client)
     print("✓ Orchestrator and agents initialized")
+    
+    # Initialize ML predictor (optional - may not have model yet)
+    try:
+        from ml_models.inference import EnrollmentPredictor
+        _ml_predictor = EnrollmentPredictor()
+        print("✓ ML Enrollment Predictor initialized")
+    except FileNotFoundError:
+        print("⚠️ ML model not found - prediction endpoint will return error until model is trained")
+        _ml_predictor = None
+    except Exception as e:
+        print(f"⚠️ ML predictor initialization failed: {e}")
+        _ml_predictor = None
+    
     print("🎉 Application ready!")
 
 
@@ -705,6 +735,110 @@ async def update_preferences(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update preferences: {str(e)}"
+        )
+
+
+# ---------- ML Prediction Endpoint ----------
+
+@app.post("/api/predict-enrollment", response_model=EnrollmentPredictionResponse)
+async def predict_enrollment(req: EnrollmentPredictionRequest):
+    """
+    Predict enrollment outcome for a clinical trial using ML model.
+    Public endpoint - no authentication required.
+    """
+    try:
+        # Check if ML predictor is available
+        if _ml_predictor is None:
+            return EnrollmentPredictionResponse(
+                predicted_class="error",
+                confidence_scores={},
+                top_risk_drivers=[],
+                error="ML model not available. Please ensure enrollment_model.pt is in ml_models/saved_models/"
+            )
+        
+        # Prepare tabular features
+        tabular_features = {
+            'phase': req.phase,
+            'target_enrollment': req.target_enrollment,
+            'site_count': req.site_count,
+            'recruitment_duration': req.recruitment_duration
+        }
+        
+        # Make prediction
+        result = _ml_predictor.predict_enrollment(
+            disease=req.disease,
+            criteria_text=req.criteria_text,
+            tabular_features=tabular_features
+        )
+        
+        return EnrollmentPredictionResponse(
+            predicted_class=result['predicted_class'],
+            confidence_scores=result['confidence_scores'],
+            top_risk_drivers=result['top_risk_drivers']
+        )
+    
+    except Exception as e:
+        print(f"❌ Prediction error: {str(e)}")
+        return EnrollmentPredictionResponse(
+            predicted_class="error",
+            confidence_scores={},
+            top_risk_drivers=[],
+            error=f"Prediction failed: {str(e)}"
+        )
+
+
+# ---------- Clinical Trials Search Endpoint ----------
+
+@app.get("/api/trials")
+async def search_trials(disease: str, limit: int = 50):
+    """
+    Search clinical trials by disease name from CSV.
+    Public endpoint - no authentication required.
+    """
+    try:
+        import pandas as pd
+        import numpy as np
+        import os
+        
+        # Path to clinical trials CSV
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.join(base_dir, 'datasets', 'clinical_trials.csv')
+        
+        if not os.path.exists(csv_path):
+            raise HTTPException(
+                status_code=404,
+                detail="Clinical trials database not found"
+            )
+        
+        # Read CSV
+        df = pd.read_csv(csv_path)
+        
+        # Case-insensitive search in Disease column
+        mask = df['Disease'].str.contains(disease, case=False, na=False)
+        results = df[mask].head(limit)
+        
+        # Replace NaN values with None for JSON serialization
+        results = results.replace({np.nan: None})
+        
+        # Convert to list of dicts
+        trials = results.to_dict('records')
+        
+        return {
+            "disease": disease,
+            "count": len(trials),
+            "trials": trials
+        }
+    
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Clinical trials database not found"
+        )
+    except Exception as e:
+        print(f"❌ Trials search error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to search trials: {str(e)}"
         )
 
 

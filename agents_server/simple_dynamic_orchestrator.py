@@ -276,14 +276,20 @@ class SimpleDynamicOrchestrator:
         
         # Extract drug/treatment name
         drug_patterns = [
+            # Safety-specific patterns - "safety of X", "side effects of X", etc.
+            r'(?:safety|side effects?|risks?|adverse|contraindication)\s+(?:of|for|about|regarding)\s+([\w\s-]+?)(?:\s+(?:for|in|against|trial|medication|drug)|$)',
+            r'(?:details|information)\s+(?:about|on|for|regarding)\s+([\w\s-]+?)(?:\s+(?:safety|side|risk)|$)',
+            # Standard patterns
             r'(?:drug|medication|treatment|therapy)[\s:]+([\w\s-]+?)(?:\s+(?:for|in|against|trial)|$)',
-            r'(?:^|\s)([\w-]+(?:mab|nib|cin|mycin|cillin))(?:\s|$)',  # Common drug suffixes
+            r'(?:^|\s)([\w-]+(?:mab|nib|cin|mycin|cillin|pirin|phene|olol|azole|pine|statin))(?:\s|$)',  # Common drug suffixes
         ]
         
         for pattern in drug_patterns:
             drug_match = re.search(pattern, query, re.IGNORECASE)
             if drug_match:
                 drug_name = drug_match.group(1).strip()
+                # Clean up the drug name - remove trailing words that aren't part of the drug
+                drug_name = re.sub(r'\s+(medication|drug|therapy|treatment)$', '', drug_name, flags=re.IGNORECASE).strip()
                 if len(drug_name) > 2:  # Avoid very short matches
                     info['drug'] = drug_name
                     print(f"Extracted drug: {drug_name}")
@@ -397,6 +403,19 @@ class SimpleDynamicOrchestrator:
                 # Safety agent takes query and analysis_type
                 analysis_kwargs = {}
                 
+                # Always try to extract entities first, even if clinical_info is empty
+                if 'drug' not in clinical_info and 'condition' not in clinical_info:
+                    # Try LLM extraction first for better entity identification
+                    print(f"Attempting LLM extraction for safety query...")
+                    llm_extracted = self.extract_entities_with_llm(query)
+                    
+                    if 'drug' in llm_extracted:
+                        clinical_info['drug'] = llm_extracted['drug']
+                        print(f"LLM extracted drug: {llm_extracted['drug']}")
+                    elif 'condition' in llm_extracted:
+                        clinical_info['condition'] = llm_extracted['condition']
+                        print(f"LLM extracted disease: {llm_extracted['condition']}")
+                
                 if 'drug' in clinical_info:
                     agent_query = clinical_info['drug']
                     analysis_kwargs['analysis_type'] = 'drug'
@@ -406,22 +425,11 @@ class SimpleDynamicOrchestrator:
                     analysis_kwargs['analysis_type'] = 'disease'
                     print(f"Using disease analysis for {agent_name}: {clinical_info['condition']}")
                 else:
-                    # Fallback: Use LLM to extract entities from the query
-                    print(f"No entities found via regex, attempting LLM extraction...")
-                    llm_extracted = self.extract_entities_with_llm(query)
-                    
-                    if 'drug' in llm_extracted:
-                        agent_query = llm_extracted['drug']
-                        analysis_kwargs['analysis_type'] = 'drug'
-                        print(f"LLM extracted drug for {agent_name}: {llm_extracted['drug']}")
-                    elif 'condition' in llm_extracted:
-                        agent_query = llm_extracted['condition']
-                        analysis_kwargs['analysis_type'] = 'disease'
-                        print(f"LLM extracted disease for {agent_name}: {llm_extracted['condition']}")
-                    else:
-                        # Last resort: use original query but warn
-                        print(f"⚠️ WARNING: Could not extract drug/disease name, using full query: {agent_query}")
-                        print(f"⚠️ This may cause FDA API to fail. Consider improving the query.")
+                    # Last resort: pass original query and let safety agent handle extraction
+                    # The safety agent has its own extraction logic in the analyze method
+                    agent_query = query
+                    print(f"⚠️ No entity extracted, passing original query to safety agent: {query}")
+                    print(f"⚠️ Safety agent will attempt its own entity extraction")
                 
                 result = agent.analyze(agent_query, **analysis_kwargs)
             

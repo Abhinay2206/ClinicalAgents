@@ -274,6 +274,66 @@ class ChatService {
     }
   }
 
+  /**
+   * Predict enrollment outcome using ML model
+   * Public endpoint - no auth required
+   */
+  async predictEnrollment(predictionData) {
+    try {
+      // Create a new axios instance without auth interceptor for this public endpoint
+      const response = await axios.post(`${API_BASE_URL}/api/predict-enrollment`, predictionData, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000, // 30 second timeout
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Prediction service error:', error);
+
+      if (error.code === 'ECONNABORTED') {
+        throw new Error('Request timeout - prediction took too long. Please try again.');
+      } else if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+        throw new Error('Cannot connect to server. Please check if the server is running.');
+      } else if (error.response?.data?.error) {
+        // Return the error from the prediction endpoint
+        throw new Error(error.response.data.error);
+      } else if (error.response) {
+        throw new Error(`Server error (${error.response.status}): ${error.response.statusText}`);
+      }
+
+      throw new Error(error.message || 'Failed to get prediction');
+    }
+  }
+
+  /**
+   * Search clinical trials by disease
+   * Public endpoint - no auth required
+   */
+  async searchTrials(disease) {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/trials`, {
+        params: { disease },
+        timeout: 15000, // 15 second timeout
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Trials search error:', error);
+
+      if (error.code === 'ECONNABORTED') {
+        throw new Error('Request timeout - search took too long. Please try again.');
+      } else if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+        throw new Error('Cannot connect to server. Please check if the server is running.');
+      } else if (error.response?.status === 404) {
+        throw new Error('Clinical trials database not found on server.');
+      } else if (error.response) {
+        throw new Error(`Server error (${error.response.status}): ${error.response.statusText}`);
+      }
+
+      throw new Error(error.message || 'Failed to search trials');
+    }
+  }
+
 }
 
 export const chatService = new ChatService();

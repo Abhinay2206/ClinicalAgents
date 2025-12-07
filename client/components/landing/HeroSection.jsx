@@ -2,11 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import MagneticButton from './MagneticButton';
 import Hero3DElements from './Hero3DElements';
-import Link from 'next/link';
 
 export default function HeroSection() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
@@ -39,7 +38,7 @@ export default function HeroSection() {
   // Throttled mouse move handler with RAF
   const handleMouseMove = useCallback((e) => {
     if (isMobile) return; // Skip on mobile
-    
+
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
     }
@@ -54,28 +53,28 @@ export default function HeroSection() {
   }, [isMobile]);
 
   return (
-    <section 
+    <section
       ref={sectionRef}
       className="relative min-h-screen flex items-center justify-center overflow-hidden px-4"
       onMouseMove={handleMouseMove}
     >
       {/* 3D Elements */}
       <Hero3DElements />
-      
+
       {/* Multi-layered Parallax Backgrounds */}
       {/* Background layer - slowest movement */}
-      <motion.div 
+      <motion.div
         className="absolute inset-0 opacity-20"
         style={{ y: y3 }}
       >
-        <motion.div 
+        <motion.div
           className="absolute inset-0 bg-gradient-to-br from-[#00ADB5]/20 via-transparent to-[#00C6FF]/20"
           style={!isMobile ? {
             x: mousePosition.x * 10,
             y: mousePosition.y * 10,
           } : {}}
         />
-        
+
         {/* Floating abstract shapes */}
         <motion.div
           className="absolute top-20 left-20 w-80 h-80 rounded-full bg-gradient-to-br from-[#00ADB5]/15 to-transparent blur-3xl"
@@ -96,7 +95,7 @@ export default function HeroSection() {
       </motion.div>
 
       {/* Midground layer - medium movement */}
-      <motion.div 
+      <motion.div
         className="absolute inset-0 opacity-25"
         style={{ y: y2 }}
       >
@@ -116,7 +115,7 @@ export default function HeroSection() {
             ease: "easeInOut"
           }}
         />
-        
+
         {/* Rotating accent ring */}
         <motion.div
           className="absolute top-1/4 right-1/4 w-64 h-64"
@@ -128,7 +127,7 @@ export default function HeroSection() {
       </motion.div>
 
       {/* Foreground layer - fastest movement */}
-      <motion.div 
+      <motion.div
         className="absolute inset-0 opacity-30"
         style={{ y: y1 }}
       >
@@ -152,7 +151,7 @@ export default function HeroSection() {
       </motion.div>
 
       {/* Content with parallax scaling and fading */}
-      <motion.div 
+      <motion.div
         className="relative z-10 max-w-6xl mx-auto text-center"
         style={{ opacity, scale }}
       >
@@ -295,9 +294,9 @@ export default function HeroSection() {
           </MagneticButton>
           <MagneticButton>
             <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-              <a href="#demo">
-                <Button size="lg" variant="outline" className="backdrop-blur-sm">
-                  View Demo
+              <a href="/predict">
+                <Button size="lg" variant="outline" className="backdrop-blur-sm border-[#00ADB5]/30 hover:border-[#00ADB5]">
+                  Check Prediction
                 </Button>
               </a>
             </motion.div>

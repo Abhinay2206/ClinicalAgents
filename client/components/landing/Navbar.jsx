@@ -24,11 +24,10 @@ export default function Navbar() {
       initial={{ y: -100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
-        scrolled 
-          ? 'bg-[var(--bg-tertiary)]/90 backdrop-blur-2xl border-b border-[var(--border-subtle)] shadow-[0_8px_32px_rgba(0,0,0,0.08)]' 
+      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${scrolled
+          ? 'bg-[var(--bg-tertiary)]/90 backdrop-blur-2xl border-b border-[var(--border-subtle)] shadow-[0_8px_32px_rgba(0,0,0,0.08)]'
           : 'bg-transparent'
-      }`}
+        }`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
@@ -44,20 +43,20 @@ export default function Navbar() {
 
           {/* Nav Links */}
           <div className="hidden md:flex items-center gap-6">
-            <Link 
-              href="#features" 
+            <Link
+              href="#features"
               className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-teal)] transition-colors"
             >
               Features
             </Link>
-            <Link 
-              href="#demo" 
+            <Link
+              href="#demo"
               className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-teal)] transition-colors"
             >
               Demo
             </Link>
-            <Link 
-              href="#" 
+            <Link
+              href="#"
               className="text-sm text-[var(--text-secondary)] hover:text-[var(--accent-teal)] transition-colors"
             >
               Docs
@@ -69,7 +68,7 @@ export default function Navbar() {
             {/* CTA Button with Transition */}
             <PageTransition href="/chat">
               <Button size="sm" className="hidden sm:inline-flex">
-                Launch App
+                Try Chat
               </Button>
             </PageTransition>
           </div>

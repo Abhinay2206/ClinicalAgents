@@ -6,46 +6,51 @@ import { SparklesIcon } from '@heroicons/react/24/outline';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { formatTime } from '@/utils/dateUtils';
+import { motion } from 'framer-motion';
 
 export default function MessageBubble({ message }) {
   const [showTime, setShowTime] = useState(false);
   const isUser = message.role === 'user';
 
   return (
-    <div 
-      className={`flex gap-3 fade-in ${isUser ? 'flex-row-reverse' : 'flex-row'} group`}
+    <motion.div
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} group`}
       onMouseEnter={() => setShowTime(true)}
       onMouseLeave={() => setShowTime(false)}
     >
       {/* Avatar */}
       <div className="flex-shrink-0">
         {isUser ? (
-          <div className="w-8 h-8 rounded-full bg-[var(--accent-teal)] flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[var(--accent-teal)] to-[var(--accent-blue)] flex items-center justify-center shadow-lg shadow-[var(--accent-teal)]/20">
             <UserCircleIcon className="w-5 h-5 text-white" />
           </div>
         ) : (
-          <div className="w-8 h-8 rounded-full bg-[var(--text-primary)] flex items-center justify-center">
-            <SparklesIcon className="w-4.5 h-4.5 text-[var(--bg-primary)]" />
+          <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] flex items-center justify-center shadow-sm">
+            <SparklesIcon className="w-4.5 h-4.5 text-[var(--accent-teal)]" />
           </div>
         )}
       </div>
 
       {/* Message Content */}
       <div className={`flex-1 max-w-2xl ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
-        <div className={`
-          px-4 py-3 rounded-xl
-          ${isUser 
-            ? 'bg-[var(--accent-teal)] text-white ml-auto' 
-            : 'bg-[var(--bg-secondary)] text-[var(--text-primary)]'
-          }
-          shadow-[var(--shadow-soft)]
+        <motion.div
+          layout
+          className={`
+          px-5 py-3.5 rounded-2xl
+          ${isUser
+              ? 'bg-gradient-to-br from-[var(--accent-teal)] to-[var(--accent-blue)] text-white ml-auto rounded-tr-sm shadow-[var(--shadow-glow)]'
+              : 'bg-[var(--bg-tertiary)]/80 backdrop-blur-sm border border-[var(--border-subtle)] text-[var(--text-primary)] rounded-tl-sm shadow-sm'
+            }
           max-w-full
         `}>
           {/* Message Text */}
           <div className={`
             prose prose-sm max-w-none
-            ${isUser 
-              ? 'prose-invert [&>p]:text-white [&>ul]:text-white [&>ol]:text-white' 
+            ${isUser
+              ? 'prose-invert [&>p]:text-white [&>ul]:text-white [&>ol]:text-white'
               : '[&>p]:text-[var(--text-primary)] [&>ul]:text-[var(--text-primary)] [&>ol]:text-[var(--text-primary)]'
             }
             [&>p]:leading-relaxed [&>p]:m-0
@@ -63,18 +68,21 @@ export default function MessageBubble({ message }) {
               <p>{message.content}</p>
             )}
           </div>
-        </div>
+        </motion.div>
 
         {/* Timestamp on hover */}
         {showTime && message.timestamp && (
-          <div className={`
-            text-xs text-[var(--text-tertiary)] mt-1 px-1 fade-in
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            className={`
+            text-xs text-[var(--text-tertiary)] mt-1 px-1
             ${isUser ? 'text-right' : 'text-left'}
           `}>
             {formatTime(message.timestamp)}
-          </div>
+          </motion.div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }
