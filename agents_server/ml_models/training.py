@@ -1,8 +1,8 @@
 """
 Training Pipeline for Enrollment Prediction Model
 
-Handles data loading from ChromaDB with batched loading to avoid quota limits,
-training with class-weighted loss, and model checkpointing.
+Handles data loading from ChromaDB with batched loading, training with 
+class-weighted loss, early stopping, and model checkpointing.
 """
 
 import os
@@ -21,10 +21,7 @@ from .enrollment_predictor import EnrollmentFusionModel
 
 
 class EnrollmentDataset(Dataset):
-    """
-    PyTorch Dataset for enrollment prediction
-    Loads data from ChromaDB and prepares it for training
-    """
+    """PyTorch Dataset for enrollment prediction"""
     
     def __init__(
         self,
@@ -45,8 +42,6 @@ class EnrollmentDataset(Dataset):
     
     def __getitem__(self, idx):
         text = self.texts[idx]
-        
-        # Tokenize text
         encoding = self.tokenizer(
             text,
             max_length=self.max_length,
@@ -73,45 +68,24 @@ def load_data_from_chromadb(
     """
     Load training data from ChromaDB in batches to avoid quota limits
     
-    Args:
-        collection_name: ChromaDB collection name
-        api_key: ChromaDB API key
-        tenant: ChromaDB tenant
-        database: ChromaDB database name
-        max_samples: Maximum number of samples to load (None for all)
-        
     Returns:
         Tuple of (texts, structured_features, labels)
     """
-    # Load environment variables if not provided
     if api_key is None:
         api_key = os.getenv('CHROMA_API_KEY')
     if tenant is None:
         tenant = os.getenv('CHROMA_TENANT')
     
-    # Connect to ChromaDB
-    client = chromadb.CloudClient(
-        api_key=api_key,
-        tenant=tenant,
-        database=database
-    )
-    
+    client = chromadb.CloudClient(api_key=api_key, tenant=tenant, database=database)
     collection = client.get_collection(collection_name)
     
-    # Get total count
     total_count = collection.count()
-    print(f"Total documents in collection: {total_count}")
+    num_samples = min(max_samples, total_count) if max_samples else total_count
     
-    # Determine how many samples to load
-    if max_samples:
-        num_samples = min(max_samples, total_count)
-    else:
-        num_samples = total_count
+    print(f"Loading {num_samples} samples from ChromaDB...")
     
-    print(f"Loading {num_samples} samples in batches...")
-    
-    # Load data in batches to avoid quota limits (ChromaDB limit is ~300 per request)
-    batch_size = 250  # Stay under limit
+    # Load in batches (ChromaDB limit ~300 per request)
+    batch_size = 250
     texts = []
     structured_features_list = []
     labels = []
@@ -122,22 +96,13 @@ def load_data_from_chromadb(
         offset = batch_idx * batch_size
         limit = min(batch_size, num_samples - offset)
         
-        print(f"  Batch {batch_idx + 1}/{num_batches} (offset={offset}, limit={limit})...")
+        results = collection.get(limit=limit, offset=offset, include=['metadatas'])
         
-        # Fetch batch
-        results = collection.get(
-            limit=limit,
-            offset=offset,
-            include=['metadatas']
-        )
-        
-        # Process batch
         for metadata in results['metadatas']:
-            # Extract text features
+            # Extract text
             disease = metadata.get('disease', 'Unknown')
             criteria = metadata.get('eligibility_criteria', '')
-            text = f"Disease: {disease}. Eligibility Criteria: {criteria}"
-            texts.append(text)
+            texts.append(f"Disease: {disease}. Eligibility Criteria: {criteria}")
             
             # Extract structured features
             phase_str = metadata.get('phase', 'N/A').lower()
@@ -152,23 +117,19 @@ def load_data_from_chromadb(
             else:
                 phase = 0
             
-            target_enrollment = metadata.get('target_enrollment', 100)
-            site_count = metadata.get('site_count', 5)
-            recruitment_duration = metadata.get('recruitment_duration_months', 12)
-            
-            # Handle missing or invalid numeric values
+            # Handle missing numeric values
             try:
-                target_enrollment = float(target_enrollment) if target_enrollment else 100
+                target_enrollment = float(metadata.get('target_enrollment', 100) or 100)
             except (ValueError, TypeError):
                 target_enrollment = 100
             
             try:
-                site_count = float(site_count) if site_count else 5
+                site_count = float(metadata.get('site_count', 5) or 5)
             except (ValueError, TypeError):
                 site_count = 5
             
             try:
-                recruitment_duration = float(recruitment_duration) if recruitment_duration else 12
+                recruitment_duration = float(metadata.get('recruitment_duration_months', 12) or 12)
             except (ValueError, TypeError):
                 recruitment_duration = 12
             
@@ -183,31 +144,32 @@ def load_data_from_chromadb(
             elif any(s in status for s in ['terminated', 'withdrawn']):
                 label = 2  # fail
             else:
-                label = 0  # default to success
+                label = 0
             
             labels.append(label)
-    
-    print(f"✓ Loaded {len(texts)} samples")
     
     return texts, np.array(structured_features_list, dtype=np.float32), np.array(labels, dtype=np.int64)
 
 
-def compute_class_weights(labels: np.ndarray, num_classes: int = 3) -> torch.Tensor:
+def compute_class_weights(labels: np.ndarray, num_classes: int = 3, smoothing: str = 'sqrt') -> torch.Tensor:
     """
-    Compute class weights for handling imbalanced data
+    Compute class weights with smoothing to prevent overfitting
     
     Args:
         labels: Array of labels
         num_classes: Number of classes
-        
-    Returns:
-        Class weights tensor
+        smoothing: 'sqrt' for square root, 'log' for logarithmic, 'none' for raw
     """
     class_counts = np.bincount(labels, minlength=num_classes)
     total_samples = len(labels)
+    raw_weights = total_samples / (num_classes * class_counts + 1e-6)
     
-    # Inverse frequency weighting
-    class_weights = total_samples / (num_classes * class_counts + 1e-6)
+    if smoothing == 'sqrt':
+        class_weights = np.sqrt(raw_weights)
+    elif smoothing == 'log':
+        class_weights = np.log1p(raw_weights)
+    else:
+        class_weights = raw_weights
     
     return torch.FloatTensor(class_weights)
 
@@ -224,10 +186,11 @@ def train_enrollment_model(
     max_samples: Optional[int] = None,
     save_dir: str = 'ml_models/saved_models',
     device: Optional[str] = None,
-    freeze_bert: bool = False
+    freeze_bert: bool = False,
+    freeze_layers: int = 8
 ) -> Dict[str, any]:
     """
-    Main training function for enrollment prediction model
+    Main training function with anti-overfitting measures
     
     Args:
         collection_name: ChromaDB collection name
@@ -237,11 +200,12 @@ def train_enrollment_model(
         epochs: Number of training epochs
         batch_size: Batch size
         learning_rate: Learning rate
-        validation_split: Fraction of data for validation
-        max_samples: Maximum samples to use (None for all)
+        validation_split: Fraction for validation
+        max_samples: Max samples to use (None for all)
         save_dir: Directory to save model
         device: Device to train on
-        freeze_bert: Whether to freeze BioBERT parameters
+        freeze_bert: Freeze all BERT parameters
+        freeze_layers: Number of bottom BERT layers to freeze (0-12, recommended: 8)
         
     Returns:
         Training history dict
@@ -251,8 +215,7 @@ def train_enrollment_model(
     
     print(f"🚀 Starting training on {device}")
     
-    # Load data from ChromaDB
-    print("📊 Loading data from ChromaDB...")
+    # Load data
     texts, structured_features, labels = load_data_from_chromadb(
         collection_name, api_key, tenant, database, max_samples
     )
@@ -260,12 +223,12 @@ def train_enrollment_model(
     print(f"✓ Loaded {len(texts)} samples")
     print(f"  Class distribution: {np.bincount(labels)}")
     
-    # Normalize structured features
+    # Normalize features
     feature_mean = structured_features.mean(axis=0)
     feature_std = structured_features.std(axis=0) + 1e-6
     structured_features = (structured_features - feature_mean) / feature_std
     
-    # Train/validation split
+    # Train/val split
     train_texts, val_texts, train_features, val_features, train_labels, val_labels = train_test_split(
         texts, structured_features, labels,
         test_size=validation_split,
@@ -275,10 +238,10 @@ def train_enrollment_model(
     
     print(f"✓ Train: {len(train_texts)}, Validation: {len(val_texts)}")
     
-    # Initialize tokenizer and model
+    # Initialize model
     print("🔧 Initializing model...")
     tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
-    model = EnrollmentFusionModel(freeze_bert=freeze_bert).to(device)
+    model = EnrollmentFusionModel(freeze_bert=freeze_bert, freeze_layers=freeze_layers).to(device)
     
     # Create datasets
     train_dataset = EnrollmentDataset(train_texts, train_features, train_labels, tokenizer)
@@ -287,17 +250,20 @@ def train_enrollment_model(
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     
-    # Compute class weights for imbalanced data
-    class_weights = compute_class_weights(train_labels).to(device)
-    print(f"✓ Class weights: {class_weights.cpu().numpy()}")
+    # Compute class weights with sqrt smoothing
+    class_weights = compute_class_weights(train_labels, smoothing='sqrt').to(device)
+    print(f"✓ Class weights (sqrt smoothed): {class_weights.cpu().numpy()}")
     
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
     
-    # Training loop
+    # Training loop with early stopping
     history = {'train_loss': [], 'val_loss': [], 'val_accuracy': [], 'val_f1': []}
     best_val_f1 = 0.0
+    best_val_loss = float('inf')
+    patience = 3
+    patience_counter = 0
     
     for epoch in range(epochs):
         print(f"\n📈 Epoch {epoch + 1}/{epochs}")
@@ -313,10 +279,8 @@ def train_enrollment_model(
             labels = batch['labels'].to(device)
             
             optimizer.zero_grad()
-            
             logits = model(input_ids, attention_mask, structured_features)
             loss = criterion(logits, labels)
-            
             loss.backward()
             optimizer.step()
             
@@ -340,7 +304,6 @@ def train_enrollment_model(
                 
                 logits = model(input_ids, attention_mask, structured_features)
                 loss = criterion(logits, labels)
-                
                 val_loss += loss.item()
                 
                 preds = torch.argmax(logits, dim=1).cpu().numpy()
@@ -358,26 +321,39 @@ def train_enrollment_model(
         print(f"  Train Loss: {avg_train_loss:.4f}")
         print(f"  Val Loss: {avg_val_loss:.4f}, Accuracy: {val_accuracy:.4f}, F1: {val_f1:.4f}")
         
+        # Overfitting warning
+        if avg_val_loss > avg_train_loss * 1.5:
+            print(f"  ⚠️ Warning: Validation loss is {avg_val_loss/avg_train_loss:.2f}x training loss (possible overfitting)")
+        
+        # Early stopping
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            print(f"  ⏳ No improvement in val loss for {patience_counter}/{patience} epochs")
+        
         # Save best model
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
             os.makedirs(save_dir, exist_ok=True)
             
-            # Save model
-            model_path = os.path.join(save_dir, 'enrollment_model.pt')
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'feature_mean': feature_mean,
                 'feature_std': feature_std,
                 'class_weights': class_weights.cpu().numpy(),
                 'num_classes': 3
-            }, model_path)
+            }, os.path.join(save_dir, 'enrollment_model.pt'))
             
-            # Save tokenizer
-            tokenizer_path = os.path.join(save_dir, 'tokenizer')
-            tokenizer.save_pretrained(tokenizer_path)
-            
-            print(f"  ✓ Saved best model (F1: {best_val_f1:.4f})")
+            tokenizer.save_pretrained(os.path.join(save_dir, 'tokenizer'))
+            print(f"  ✓ Saved best model (F1: {best_val_f1:.4f}, Val Loss: {avg_val_loss:.4f})")
+        
+        # Early stopping trigger
+        if patience_counter >= patience:
+            print(f"\n🛑 Early stopping triggered! No improvement for {patience} epochs.")
+            print(f"   Best F1: {best_val_f1:.4f}, Best Val Loss: {best_val_loss:.4f}")
+            break
     
     print(f"\n✨ Training complete! Best validation F1: {best_val_f1:.4f}")
     print(f"📁 Model saved to: {save_dir}")

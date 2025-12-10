@@ -13,18 +13,44 @@ from typing import Dict, Optional
 
 class BioBERTEncoder(nn.Module):
     """
-    BioBERT encoder for clinical text (disease name + criteria)
-    Uses dmis-lab/biobert-base-cased-v1.1 pretrained model
+    BioBERT encoder for clinical text
+    Supports full freezing or partial layer freezing for better fine-tuning
     """
     
-    def __init__(self, model_name: str = "dmis-lab/biobert-base-cased-v1.1", freeze_bert: bool = False):
-        super(BioBERTEncoder, self).__init__()
+    def __init__(self, model_name: str = "dmis-lab/biobert-base-cased-v1.1", freeze_bert: bool = False, freeze_layers: int = 0):
+        """
+        Args:
+            model_name: BioBERT model name
+            freeze_bert: If True, freeze all BERT parameters
+            freeze_layers: Number of bottom layers to freeze (0-12). Recommended: 8 for small datasets
+        """
+        super().__init__()
         self.bert = AutoModel.from_pretrained(model_name)
         
-        # Optionally freeze BERT parameters for faster training
+        # Option 1: Freeze all BERT parameters
         if freeze_bert:
             for param in self.bert.parameters():
                 param.requires_grad = False
+            print(f"  ✓ Frozen all BioBERT layers")
+        
+        # Option 2: Freeze only bottom N layers (recommended for small datasets)
+        elif freeze_layers > 0:
+            # BioBERT has 12 layers (0-11)
+            freeze_layers = min(freeze_layers, 12)
+            
+            # Freeze embeddings
+            for param in self.bert.embeddings.parameters():
+                param.requires_grad = False
+            
+            # Freeze first N encoder layers
+            for layer_idx in range(freeze_layers):
+                for param in self.bert.encoder.layer[layer_idx].parameters():
+                    param.requires_grad = False
+            
+            trainable_layers = 12 - freeze_layers
+            print(f"  ✓ Frozen first {freeze_layers} BioBERT layers, training top {trainable_layers} layers")
+        else:
+            print(f"  ✓ Training all BioBERT layers")
         
         self.hidden_size = self.bert.config.hidden_size  # 768 for BERT-base
     
@@ -52,7 +78,7 @@ class StructuredFeaturesMLP(nn.Module):
     """
     
     def __init__(self, input_dim: int = 4, hidden_dims: list = [64, 32], dropout: float = 0.3):
-        super(StructuredFeaturesMLP, self).__init__()
+        super().__init__()
         
         layers = []
         prev_dim = input_dim
@@ -89,31 +115,35 @@ class EnrollmentFusionModel(nn.Module):
         self,
         biobert_model_name: str = "dmis-lab/biobert-base-cased-v1.1",
         structured_input_dim: int = 4,
-        structured_hidden_dims: list = [64, 32],
-        fusion_hidden_dim: int = 128,
+        hidden_dim: int = 128,
         num_classes: int = 3,
-        dropout: float = 0.3,
-        freeze_bert: bool = False
+        freeze_bert: bool = False,
+        freeze_layers: int = 0
     ):
-        super(EnrollmentFusionModel, self).__init__()
+        """
+        Args:
+            biobert_model_name: BioBERT model name
+            structured_input_dim: Dimension of structured features (phase, enrollment, sites, duration)
+            hidden_dim: Hidden dimension for fusion layer
+            num_classes: Number of output classes (success, delayed, fail)
+            freeze_bert: If True, freeze all BERT parameters
+            freeze_layers: Number of bottom BERT layers to freeze (0-12). Recommended: 8 for small datasets
+        """
+        super().__init__()
         
-        # Text encoder
-        self.text_encoder = BioBERTEncoder(biobert_model_name, freeze_bert)
+        # Text encoder with partial freezing support
+        self.text_encoder = BioBERTEncoder(biobert_model_name, freeze_bert, freeze_layers)
         
         # Structured features encoder
-        self.structured_encoder = StructuredFeaturesMLP(
-            input_dim=structured_input_dim,
-            hidden_dims=structured_hidden_dims,
-            dropout=dropout
-        )
+        self.structured_encoder = StructuredFeaturesMLP(input_dim=structured_input_dim)
         
         # Fusion layer
         fusion_input_dim = self.text_encoder.hidden_size + self.structured_encoder.output_dim
         self.fusion = nn.Sequential(
-            nn.Linear(fusion_input_dim, fusion_hidden_dim),
+            nn.Linear(fusion_input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(fusion_hidden_dim, num_classes)
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, num_classes)
         )
         
         self.num_classes = num_classes
@@ -164,31 +194,3 @@ class EnrollmentFusionModel(nn.Module):
         logits = self.forward(input_ids, attention_mask, structured_features)
         probabilities = torch.softmax(logits, dim=1)
         return probabilities
-
-
-def create_model(
-    num_classes: int = 3,
-    freeze_bert: bool = False,
-    device: Optional[str] = None
-) -> EnrollmentFusionModel:
-    """
-    Factory function to create and initialize the enrollment prediction model
-    
-    Args:
-        num_classes: Number of outcome classes (default: 3 for success/delayed/fail)
-        freeze_bert: Whether to freeze BioBERT parameters
-        device: Device to load model on ('cuda' or 'cpu')
-        
-    Returns:
-        Initialized EnrollmentFusionModel
-    """
-    if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    
-    model = EnrollmentFusionModel(
-        num_classes=num_classes,
-        freeze_bert=freeze_bert
-    )
-    
-    model = model.to(device)
-    return model
