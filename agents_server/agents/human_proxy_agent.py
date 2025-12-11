@@ -66,8 +66,14 @@ class HumanProxyAgent:
             # Storage failures should not block the conversation
             pass
 
-        # 3) orchestrate specialized agents with context
-        agent_results = self.orchestrator.process_query(prompt)
+        # 3) orchestrate with planning-first workflow
+        print("\n" + "="*60)
+        print("🤖 HUMAN PROXY AGENT - Starting Clinical Trial Analysis")
+        print("="*60)
+        
+        # Use planning-enabled workflow
+        agent_results = self.orchestrator.process_query_with_planning(prompt)
+        
         try:
             await self.store.log_event(sid, event="orchestrator_results", agent_name="orchestrator", content=agent_results, status=agent_results.get("status", "ok"))
         except Exception:

@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { chatService } from '@/services/chatService';
 
 export function useChat(sessionId, updateSessionTitle) {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const abortControllerRef = useRef(null);
 
   // Load history when session changes
   const loadHistory = useCallback(async (sid) => {
@@ -54,6 +55,9 @@ export function useChat(sessionId, updateSessionTitle) {
   const sendMessage = useCallback(async (content) => {
     if (!content.trim()) return;
 
+    // Create new AbortController for this request
+    abortControllerRef.current = new AbortController();
+
     // Add user message
     const userMessage = {
       id: Date.now(),
@@ -94,7 +98,7 @@ export function useChat(sessionId, updateSessionTitle) {
     setError(null);
 
     try {
-      const response = await chatService.sendMessage(content, sessionId);
+      const response = await chatService.sendMessage(content, sessionId, abortControllerRef.current.signal);
 
       console.log('📥 Received response from backend:', response);
 
@@ -120,6 +124,12 @@ export function useChat(sessionId, updateSessionTitle) {
         return newMessages;
       });
     } catch (err) {
+      // Don't show error if it was an abort
+      if (err.name === 'AbortError') {
+        console.log('Request cancelled by user');
+        return;
+      }
+
       console.error('Chat error:', err);
       setError(err.message || 'Failed to send message. Please try again.');
 
@@ -134,8 +144,16 @@ export function useChat(sessionId, updateSessionTitle) {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   }, [sessionId, updateSessionTitle]);
+
+  const cancelRequest = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setIsLoading(false);
+    }
+  }, []);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
@@ -147,6 +165,7 @@ export function useChat(sessionId, updateSessionTitle) {
     isLoading,
     error,
     sendMessage,
+    cancelRequest,
     clearMessages,
   };
 }

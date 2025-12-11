@@ -6,7 +6,7 @@ scikit-learn
 neo4j
 tqdm
 python-dotenv
-google-generativeai
+groq
 requests
 chromadb
 pyautogen
@@ -19,3 +19,6 @@ uvicorn
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
+langgraph>=0.0.30
+langchain-core>=0.1.0
+typing-extensions>=4.5.0

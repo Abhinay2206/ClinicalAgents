@@ -11,6 +11,7 @@ export default function ChatMain({
   isLoading,
   error,
   onSendMessage,
+  onCancelRequest,
   onToggleSidebar,
   isSidebarOpen,
   onOpenSettings,
@@ -42,6 +43,7 @@ export default function ChatMain({
       {/* Input Area */}
       <ChatInput
         onSendMessage={onSendMessage}
+        onCancelRequest={onCancelRequest}
         isLoading={isLoading}
         showSuggestions={!hasMessages}
       />

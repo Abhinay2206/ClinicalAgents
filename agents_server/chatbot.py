@@ -4,31 +4,23 @@ import sys
 import datetime
 from typing import Optional
 from dotenv import load_dotenv
-from gemini_client import GeminiClient
-from simple_dynamic_orchestrator import SimpleDynamicOrchestrator
-from agents.human_proxy_agent import HumanProxyAgent
+from llm_client import GrokClient
 
 load_dotenv()
 
 class ClinicalTrialChatbot:
     """
     Patient-friendly chatbot interface for clinical trial information
+    Powered by ClinicalAgent 2.0 LangGraph workflow
     """
     
     def __init__(self):
-        # Initialize Gemini 2.5 Flash model
-        self.llm = GeminiClient(model_name="gemini-2.5-flash")
-        
-        # Initialize dynamic orchestrator
-        self.orchestrator = SimpleDynamicOrchestrator(self.llm)
-
-        # HumanProxyAgent for session management, review gate, and Mongo logging
-        use_proxy = (os.getenv("USE_PROXY", "1") != "0")
-        self.proxy: Optional[HumanProxyAgent] = HumanProxyAgent(self.llm) if use_proxy else None
-        self.session_id = self.proxy.session_id if self.proxy else None
+        # Initialize LLM model
+        self.llm = GrokClient()
         
         # Conversation history
         self.conversation_history = []
+
         
     def generate_patient_friendly_response(self, agent_results: dict, original_query: str) -> str:
         """
@@ -117,6 +109,7 @@ Please try rephrasing your question or ask something else about clinical trials.
     def process_message(self, user_message: str, detailed: bool = False) -> dict:
         """
         Process a user message and return a response
+        Uses ClinicalAgent 2.0 LangGraph workflow
         """
         # Store in conversation history
         self.conversation_history.append({
@@ -125,33 +118,116 @@ Please try rephrasing your question or ask something else about clinical trials.
             "type": "detailed" if detailed else "simple"
         })
         
-        if self.proxy:
-            # Use proxy for full pipeline (reasoner + reviewer + Mongo logging)
-            result = self.proxy.handle_user_prompt(user_message)
-            agent_results = result.get("agent_results", {})
-            response_text = result.get("final_output", "")
-            self.session_id = result.get("session_id", self.session_id)
+        # Check if this is a numbered format trial prediction
+        is_trial_prediction = self._is_trial_prediction_format(user_message)
+        
+        if is_trial_prediction:
+            # Use LangGraph v2 workflow for trial predictions
+            result = self._process_with_langgraph(user_message)
         else:
-            # Fallback to direct orchestrator path
-            agent_results = self.orchestrator.process_query(user_message)
-            if detailed:
-                response_text = self.get_detailed_analysis(agent_results)
-            else:
-                response_text = self.generate_patient_friendly_response(agent_results, user_message)
+            # For general questions, use simple LLM response
+            response = self.llm.generate(
+                f"You are a helpful clinical trial assistant. Answer this question concisely: {user_message}",
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            result = {
+                "response": response,
+                "activated_agents": ["General LLM"],
+                "status": "success",
+                "raw_results": {"response": response}
+            }
         
         # Store response in history
         self.conversation_history.append({
             "timestamp": datetime.datetime.now(),
-            "bot": response_text,
-            "activated_agents": agent_results.get("activated_agents", [])
+            "bot": result["response"],
+            "activated_agents": result.get("activated_agents", [])
         })
         
-        return {
-            "response": response_text,
-            "activated_agents": agent_results.get("activated_agents", []),
-            "status": agent_results.get("status", "success"),
-            "raw_results": agent_results
-        }
+        return result
+    
+    def _is_trial_prediction_format(self, text: str) -> bool:
+        """Check if input is in numbered trial prediction format"""
+        import re
+        # Look for pattern: (1) drug: ... (2) disease: ...
+        pattern = r'\(1\)\s*drug:'
+        return bool(re.search(pattern, text, re.IGNORECASE))
+    
+    def _process_with_langgraph(self, user_message: str) -> dict:
+        """Process using ClinicalAgent 2.0 LangGraph workflow"""
+        try:
+            from langgraph_v2.workflow import ClinicalTrialWorkflow
+            
+            print("\n🔬 Using ClinicalAgent 2.0 LangGraph Workflow...")
+            workflow = ClinicalTrialWorkflow(verbose=True)
+            result = workflow.predict(user_message)
+            
+            # Format for chatbot display
+            response_text = self._format_langgraph_response(result)
+            
+            return {
+                "response": response_text,
+                "activated_agents": ["ClinicalAgent 2.0", "Planning", "Enrollment", "Safety", "Efficacy", "Reasoning"],
+                "status": "success" if not result['errors'] else "partial",
+                "raw_results": result
+            }
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {
+                "response": f"❌ Error processing trial prediction: {str(e)}\n\nPlease check your input format.",
+                "activated_agents": ["ClinicalAgent 2.0"],
+                "status": "error",
+                "raw_results": {"error": str(e)}
+            }
+    
+    def _format_langgraph_response(self, result: dict) -> str:
+        """Format LangGraph workflow result for chatbot display"""
+        response = f"""
+╔══════════════════════════════════════════════════════════════╗
+║          🏥 Clinical Trial Prediction Results 🏥            ║
+╚══════════════════════════════════════════════════════════════╝
+
+🎯 **PREDICTION**: {result['prediction']}
+📊 **CONFIDENCE**: {int(result['confidence'] * 100)}%
+
+🧠 **REASONING**:
+{result['reasoning']}
+
+"""
+        
+        response += "\n" + "="*65 + "\n"
+        response += "📑 **INDIVIDUAL AGENT REPORTS**\n"
+        response += "="*65 + "\n"
+        
+        if result['reports']['enrollment']:
+            response += f"\n👥 **ENROLLMENT ANALYSIS** (Historian):\n{result['reports']['enrollment']}\n"
+        
+        if result['reports']['safety']:
+            response += f"\n💊 **SAFETY ANALYSIS** (Regulator):\n{result['reports']['safety']}\n"
+        
+        if result['reports']['efficacy']:
+            response += f"\n🔬 **EFFICACY ANALYSIS** (Scientist):\n{result['reports']['efficacy']}\n"
+        
+        if result['warnings']:
+            response += "\n⚠️  **WARNINGS**:\n"
+            for warning in result['warnings']:
+                response += f"  • {warning}\n"
+        
+        if result['errors']:
+            response += "\n❌ **ERRORS**:\n"
+            for error in result['errors']:
+                response += f"  • {error}\n"
+        
+        response += "\n" + "="*65 + "\n"
+        response += f"📝 **Parsed Input**:\n"
+        response += f"  • Drug (original): {result['drug_parsed']['original']}\n"
+        response += f"  • Drug (cleaned): {result['drug_parsed']['cleaned']}\n"
+        response += f"  • Disease: {result['disease_parsed']}\n"
+        
+        return response
     
     def get_welcome_message(self) -> str:
         """
@@ -159,33 +235,43 @@ Please try rephrasing your question or ask something else about clinical trials.
         """
         return """
 ╔══════════════════════════════════════════════════════════════╗
-║         🏥 Clinical Trial Information Assistant 🏥          ║
+║    🏥 Clinical Trial Assistant - ClinicalAgent 2.0 🏥      ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Hello! I'm your Clinical Trial Assistant. I can help you understand
-clinical trials in simple terms and provide detailed information when needed.
+Hello! I'm your Clinical Trial Assistant powered by ClinicalAgent 2.0.
+I can help you predict trial outcomes and provide detailed analysis.
 
 📋 **What I can help with:**
-   • Finding clinical trials for specific conditions
-   • Explaining enrollment criteria and success rates
-   • Providing safety and effectiveness information
-   • Answering questions about specific trials (NCT numbers)
-   • Translating complex medical information into plain language
+   • Predicting clinical trial success (PASS/FAIL)
+   • Analyzing enrollment feasibility from historical data
+   • Assessing drug safety risks via FDA databases
+   • Evaluating efficacy through biological pathways
+   • Answering general clinical trial questions
 
-💬 **Example questions you can ask:**
+💬 **For Trial Predictions** (ClinicalAgent 2.0):
+   Use this numbered format:
+   (1) drug: <drug_name>; (2) disease: <disease_name>; 
+   (3) inclusion criteria: <criteria>; (4) exclusion criteria: <criteria>;
+
+   Example:
+   "(1) drug: Metformin tablet; (2) disease: Type 2 Diabetes; 
+    (3) inclusion criteria: Adults 18-65 with HbA1c > 7.0%; 
+    (4) exclusion criteria: Severe kidney disease;"
+
+🔍 **General Questions**:
    • "What trials are available for diabetes?"
-   • "What are the chances of success for cancer trials?"
-   • "Is trial NCT01234567 safe?"
-   • "What are the enrollment requirements for heart disease studies?"
+   • "What are the safety concerns for aspirin?"
+   • "Tell me about trial NCT01234567"
 
-🔍 **Special commands:**
-   • Type 'detailed' before your question for technical analysis
+🔧 **Special commands:**
    • Type 'help' for more information
+   • Type 'examples' for sample queries
    • Type 'history' to see our conversation
    • Type 'quit' or 'exit' to end our chat
 
-Let's get started! What would you like to know about clinical trials?
+Let's get started! What would you like to know?
 """
+
     
     def display_help(self) -> str:
         """
@@ -335,9 +421,6 @@ def interactive_chatbot():
     
     # Display welcome message
     print(chatbot.get_welcome_message())
-    # Show active session id if proxy enabled
-    if chatbot.proxy and chatbot.session_id:
-        print(f"[session: {chatbot.session_id}] (Mongo logging {'ON' if os.getenv('MONGODB_URI') else 'OFF'})")
     
     last_results = None
     
@@ -365,43 +448,6 @@ def interactive_chatbot():
             
             if user_input.lower() == 'history':
                 print(chatbot.show_history())
-                continue
-            if user_input.lower().startswith('session'):
-                # session -> show current, session new -> new id
-                parts = user_input.split()
-                if len(parts) == 1:
-                    print(f"Current session: {chatbot.session_id or 'N/A'}")
-                elif len(parts) == 2 and parts[1].lower() == 'new':
-                    if chatbot.proxy:
-                        # create a new proxy with new session id
-                        chatbot.proxy = HumanProxyAgent(chatbot.llm)
-                        chatbot.session_id = chatbot.proxy.session_id
-                        print(f"✓ Started new session: {chatbot.session_id}")
-                    else:
-                        print("Proxy disabled. Enable USE_PROXY to manage sessions.")
-                else:
-                    print("Usage: 'session' | 'session new'")
-                continue
-            if user_input.lower().startswith('replay'):
-                if chatbot.proxy:
-                    parts = user_input.split()
-                    sid = parts[1] if len(parts) > 1 else chatbot.session_id
-                    if not sid:
-                        print("No session id specified or active.")
-                        continue
-                    # fetch and print a simple replay summary
-                    try:
-                        import asyncio
-                        replay = asyncio.run(chatbot.proxy.replay_session(sid))
-                        events = replay.get('events', [])
-                        print(f"\nReplay for session {sid} - {len(events)} events:")
-                        for e in events:
-                            ts = str(e.get('timestamp',''))
-                            print(f"- [{ts}] {e.get('event')} via {e.get('agent_name')}")
-                    except Exception as e:
-                        print(f"Failed to replay: {e}")
-                else:
-                    print("Proxy disabled. Enable USE_PROXY to use replay.")
                 continue
             
             if user_input.lower() == 'clear':

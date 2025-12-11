@@ -1,91 +1,90 @@
 'use client';
 
-import { 
-  SparklesIcon, 
-  UserGroupIcon, 
-  ChartBarIcon, 
-  ShieldCheckIcon,
-  MagnifyingGlassIcon
-} from '@heroicons/react/24/outline';
+import { SparklesIcon, BeakerIcon, ChartBarIcon } from '@heroicons/react/24/outline';
 
 export default function WelcomeScreen({ onSendMessage }) {
-  const examples = [
-    {
-      icon: UserGroupIcon,
-      title: "Patient Enrollment",
-      prompt: "What are the enrollment criteria for diabetes trials?"
-    },
-    {
-      icon: ChartBarIcon,
-      title: "Efficacy Analysis",
-      prompt: "Show me recent efficacy results for cancer immunotherapy"
-    },
-    {
-      icon: ShieldCheckIcon,
-      title: "Safety Monitoring",
-      prompt: "What are the common adverse events in cardiovascular trials?"
-    },
-    {
-      icon: MagnifyingGlassIcon,
-      title: "Trial Search",
-      prompt: "Find active clinical trials for Alzheimer's disease"
-    }
-  ];
+    const exampleQueries = [
+        {
+            icon: SparklesIcon,
+            title: "Trial Prediction",
+            query: "(1) drug: Metformin; (2) disease: Type 2 Diabetes; (3) inclusion criteria: Adults 18-65; (4) exclusion criteria: Kidney disease;",
+            description: "Predict trial outcome"
+        },
+        {
+            icon: BeakerIcon,
+            title: "Safety Analysis",
+            query: "What are the safety concerns with aspirin?",
+            description: "Check drug safety"
+        },
+        {
+            icon: ChartBarIcon,
+            title: "Enrollment Data",
+            query: "What is the enrollment success rate for diabetes trials?",
+            description: "Historical success rates"
+        }
+    ];
 
-  return (
-    <div className="flex flex-col items-center justify-center h-full px-4 py-8 fade-in">
-      {/* Logo & Title */}
-      <div className="text-center mb-10">
-        <div className="w-14 h-14 mx-auto mb-4 rounded-xl bg-[var(--accent-teal)] flex items-center justify-center shadow-[var(--shadow-soft)]">
-          <SparklesIcon className="w-7 h-7 text-white" />
-        </div>
-        
-        <h1 className="text-2xl font-semibold text-[var(--text-primary)] mb-2">
-          ClinicalGPT
-        </h1>
-        
-        <p className="text-[15px] text-[var(--text-secondary)] max-w-md mx-auto">
-          AI assistant for clinical trial intelligence
-        </p>
-      </div>
+    return (
+        <div className="h-full flex items-center justify-center px-6">
+            <div className="max-w-2xl w-full space-y-8 fade-in">
+                {/* Welcome Header */}
+                <div className="text-center space-y-3">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--accent-teal)] to-[var(--accent-purple)] mb-4">
+                        <SparklesIcon className="w-8 h-8 text-white" />
+                    </div>
 
-      {/* Example Prompts */}
-      <div className="w-full max-w-2xl">
-        <h2 className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider mb-4 text-center">
-          Try asking
-        </h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {examples.map((example, index) => (
-            <button
-              key={index}
-              onClick={() => onSendMessage(example.prompt)}
-              className="group p-4 rounded-xl bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] text-left transition-all duration-150 hover:shadow-[var(--shadow-soft)] border border-transparent hover:border-[var(--border-subtle)]"
-            >
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[var(--accent-teal)]/10 flex items-center justify-center flex-shrink-0 group-hover:bg-[var(--accent-teal)] transition-colors">
-                  <example.icon className="w-4 h-4 text-[var(--accent-teal)] group-hover:text-white transition-colors" />
+                    <h1 className="text-3xl font-bold text-[var(--text-primary)]">
+                        Welcome to ClinicalAgent 2.0
+                    </h1>
+
+                    <p className="text-[var(--text-secondary)] text-sm max-w-md mx-auto">
+                        AI-powered clinical trial outcome prediction and analysis. Ask questions or predict trial success using our numbered format.
+                    </p>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-medium text-[var(--text-primary)] mb-1 text-sm">
-                    {example.title}
-                  </h3>
-                  <p className="text-xs text-[var(--text-secondary)] line-clamp-2 leading-relaxed">
-                    {example.prompt}
-                  </p>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
 
-      {/* Footer */}
-      <div className="mt-10 text-center">
-        <p className="text-xs text-[var(--text-tertiary)]">
-          Powered by Gemini AI · Clinical research assistant
-        </p>
-      </div>
-    </div>
-  );
+                {/* Example Queries */}
+                <div className="grid gap-3">
+                    <p className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wide">
+                        Try these examples
+                    </p>
+
+                    {exampleQueries.map((example, index) => (
+                        <button
+                            key={index}
+                            onClick={() => onSendMessage(example.query)}
+                            className="group text-left p-4 rounded-xl bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] hover:border-[var(--accent-teal)]/30 transition-all duration-200 hover:shadow-[var(--shadow-soft)]"
+                        >
+                            <div className="flex items-start gap-3">
+                                <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-[var(--accent-teal)]/10 group-hover:bg-[var(--accent-teal)]/20 flex items-center justify-center transition-colors">
+                                    <example.icon className="w-5 h-5 text-[var(--accent-teal)]" />
+                                </div>
+
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <h3 className="text-sm font-semibold text-[var(--text-primary)]">
+                                            {example.title}
+                                        </h3>
+                                        <span className="text-xs text-[var(--text-tertiary)]">
+                                            {example.description}
+                                        </span>
+                                    </div>
+
+                                    <p className="text-xs text-[var(--text-secondary)] line-clamp-2">
+                                        {example.query}
+                                    </p>
+                                </div>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+
+                {/* Info Banner */}
+                <div className="p-4 rounded-lg bg-[var(--accent-teal)]/10 border border-[var(--accent-teal)]/20">
+                    <p className="text-xs text-[var(--text-secondary)] text-center">
+                        💡 <strong>Pro tip:</strong> Use numbered format for trial predictions: <code className="px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] font-mono text-[10px]">(1) drug: ... (2) disease: ...</code>
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
 }

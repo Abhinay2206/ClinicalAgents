@@ -634,6 +634,8 @@ Trial {i}: {metadata.get('nct_id', 'N/A')}
         Analyze enrollment patterns for clinical trials based on search results
         Enhanced with API fallback and running trial suggestions
         """
+        print(f"\n📊 Enrollment Agent analyzing: '{search_term}' (type: {search_type})")
+        
         # First try local search
         trials = self.search_clinical_trials(search_term, search_type, top_k=5)
         
@@ -735,44 +737,157 @@ For more specific information, please refine your search or consult with a healt
         CLINICAL TRIAL DATA:
         {chr(10).join(trial_summaries)}
         
-        REQUIRED OUTPUT FORMAT - Provide TWO sections:
+        CRITICAL REQUIREMENTS - YOU MUST:
+        1. Reference SPECIFIC trial NCT IDs from the data above throughout your response
+        2. Include SPECIFIC enrollment numbers, percentages, and success predictions from the data
+        3. Use markdown tables for trial comparisons and structured lists for criteria
+        4. If the trial data above is insufficient or unclear, respond ONLY with:
+           "Insufficient trial data available for {analysis_context}. Please refine your search or consult ClinicalTrials.gov directly."
+        5. DO NOT provide generic "how clinical trials work" information
+        6. BE SPECIFIC - cite actual trials, their IDs, statuses, and our success predictions
+        7. Focus on the ACTUAL TRIALS in the data, not general trial concepts
+        8. Use emojis and formatting to make the output visually structured and scannable
         
-        **PATIENT-FRIENDLY SUMMARY**
-        Write 3-4 paragraphs in clear, accessible language explaining:
-        - Overview of the clinical research studies found
-        - Enrollment success predictions and what they indicate
-        - Key eligibility patterns and requirements
-        - Important insights for potential study participants
+        Structure your response using this EXACT format:
         
-        **DETAILED TECHNICAL ANALYSIS**
+        # Clinical Trial Enrollment Analysis: {analysis_context}
         
-        1. **Enrollment Success Predictions**
-           - Success rate distribution across studies
-           - Predictive factors and their impact
-           - Comparative analysis of success probabilities
+        ## 🎯 Search Summary
+        - **Trials Found**: {len(trials)} clinical studies
+        - **Currently Recruiting**: [Count from data]
+        - **High Success Probability (≥75%)**: [Count from success predictions]
+        - **Moderate Success (50-74%)**: [Count from success predictions]
+        - **Data Source**: [Local database/ClinicalTrials.gov API]
         
-        2. **Enrollment Patterns & Status**
-           - Current study status distribution
-           - Historical completion/termination patterns
-           - Success factors in completed studies
+        ## 📋 Patient-Friendly Overview
         
-        3. **Eligibility Criteria**
-           - Common inclusion/exclusion criteria
-           - Demographic requirements
-           - Medical history considerations
+        [3-4 clear paragraphs explaining in plain language:
+        - How many trials were found for {analysis_context} specifically
+        - Which 2-3 trials (by NCT ID) have the best enrollment prospects and why
+        - General eligibility requirements common across these specific trials
+        - What patients should do next (specific actionable steps)
+        - Important considerations when choosing among these particular trials]
         
-        4. **Recruitment Analysis**
-           - Identified enrollment barriers
-           - Recruitment optimization strategies
-           - Timeline and feasibility factors
+        ## 📊 Trial Comparison Matrix
         
-        5. **Clinical Recommendations**
-           - Best practices for study participation
-           - Risk assessment considerations
-           - Patient population suitability
+        ### All Trials Overview
+        | NCT ID | Phase | Status | Success Prediction | Key Eligibility | Study Type |
+        |--------|-------|--------|-------------------|-----------------|------------|
+        [List EVERY trial from the data with all columns filled in from trial metadata]
         
-        Focus on evidence-based analysis suitable for medical education and informed decision-making.
-        Begin with the PATIENT-FRIENDLY SUMMARY.
+        ## 🟢 Top Recommended Trials (Based on Success Predictions)
+        
+        ### 1. [Highest Success Trial NCT ID] - [Brief Title]
+        - **Enrollment Success**: [emoji] [score]% ([category])
+        - **Phase**: [Phase from data]
+        - **Status**: [Current status]
+        - **Study Type**: [From data]
+        - **Why This Trial Scores High**:
+          [List specific predictive factors from the success prediction]
+        - **Key Eligibility Requirements**:
+          ✅ [Requirement 1 from data]
+          ✅ [Requirement 2 from data]
+          ❌ **Exclusions**: [Key exclusions if available]
+        - **For Patients**: [Plain language explanation of suitability]
+        
+        ### 2. [Second Best Trial NCT ID] - [Brief Title]
+        [Same structure as above]
+        
+        ### 3. [Third Best Trial NCT ID] - [Brief Title]
+        [Same structure as above]
+        
+        ## 📈 Enrollment Success Predictions Detailed
+        
+        ### Success Rate Distribution
+        | Success Category | Number of Trials | NCT IDs |
+        |------------------|------------------|---------|
+        | 🟢 High (≥75%) | [count] | [list NCT IDs] |
+        | 🟡 Moderate (50-74%) | [count] | [list NCT IDs] |
+        | 🔴 Lower (<50%) | [count] | [list NCT IDs] |
+        
+        ### Predictive Factors Analysis
+        **Common Success Factors Identified**:
+        - [Factor 1]: Present in [X] trials ([list NCT IDs])
+        - [Factor 2]: Present in [X] trials ([list NCT IDs])
+        
+        **Common Risk Factors Identified**:
+        - [Factor 1]: Present in [X] trials ([list NCT IDs])
+        - [Factor 2]: Present in [X] trials ([list NCT IDs])
+        
+        ## 🔍 Trial Status Breakdown
+        
+        | Status | Count | NCT IDs |
+        |--------|-------|---------|
+        [Extract all unique statuses from data and group trials by status]
+        
+        ### Currently Recruiting Trials ([count])
+        [List each recruiting trial with NCT ID and brief title]
+        
+        ### Completed/Terminated Trials ([count])
+        [List with reasons for completion/termination if available]
+        
+        ## 📋 Eligibility Criteria Analysis
+        
+        ### Common Inclusion Criteria Across Trials
+        [Extract and list criteria that appear in multiple trials, citing which NCT IDs]
+        
+        1. **[Criterion 1]** - Required in: [NCT ID list]
+        2. **[Criterion 2]** - Required in: [NCT ID list]
+        3. **[Criterion 3]** - Required in: [NCT ID list]
+        
+        ### Common Exclusion Criteria
+        [Extract and list common exclusions, citing which NCT IDs]
+        
+        1. **[Exclusion 1]** - Applies to: [NCT ID list]
+        2. **[Exclusion 2]** - Applies to: [NCT ID list]
+        
+        ### Trial-Specific Requirements
+        [Highlight unique criteria for specific trials]
+        
+        - **[NCT ID]**: [Unique requirement]
+        - **[NCT ID]**: [Unique requirement]
+        
+        ## 💡 Enrollment Recommendations
+        
+        ### Best Trials by Success Factors
+        1. **For Best Overall Enrollment Prospects**: [NCT ID(s)] - [Reasoning with data]
+        2. **For Specific Patient Populations**: [NCT ID(s)] - [Which populations and why]
+        3. **For Geographic Accessibility**: [If location data available]
+        
+        ### Potential Enrollment Barriers
+        Based on the trial data:
+        - **[Barrier 1]**: [Affects which trials - cite NCT IDs]
+        - **[Barrier 2]**: [Context from data]
+        
+        ### Strategies to Improve Enrollment Success
+        1. **[Strategy 1]**: [Based on high-success trial patterns]
+        2. **[Strategy 2]**: [Evidence from trial data]
+        
+        ## 🗺️ Next Steps for Patients/Participants
+        
+        1. **Review Top Trials**: Focus on [specific NCT IDs based on success predictions]
+        2. **Check Eligibility**: Verify you meet criteria for [most relevant NCT ID(s)]
+        3. **Contact Trial Sites**: 
+           - Visit ClinicalTrials.gov and search for [NCT ID]
+           - Contact information available on trial registry pages
+        4. **Consult Healthcare Provider**: Discuss suitability of [specific trials] with your doctor
+        5. **Prepare Questions**: [Specific questions relevant to these trials]
+        
+        ## 📋 Bottom Line: Key Enrollment Insights
+        
+        Based on analysis of {len(trials)} trials for {analysis_context}:
+        
+        1. **[Most important finding from the data with NCT IDs]**
+        2. **[Success rate insight with specific numbers]**
+        3. **[Eligibility insight relevant to multiple trials]**
+        4. **[Best recruitment opportunity with NCT ID]**
+        5. **[Important consideration or caveat from the data]**
+        
+        ---
+        *Note: This analysis is based on clinical trial registry data for educational purposes. Always verify current trial status and discuss with healthcare professionals.*
+        
+        REMEMBER: Reference SPECIFIC TRIAL NCT IDs and SUCCESS PREDICTIONS throughout. Use tables extensively. NO generic trial information.
+        Begin with the Patient-Friendly Overview, then provide comprehensive structured analysis.
         """
         
         # Use run method with retry logic

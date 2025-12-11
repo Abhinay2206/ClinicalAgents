@@ -13,7 +13,7 @@ export default function ChatInterface() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const { sessions, currentSessionId, createNewSession, switchSession, deleteSession, updateSessionTitle, setCurrentSessionId } = useSessions();
-  const { messages, isLoading, error, sendMessage, clearMessages } = useChat(currentSessionId, updateSessionTitle);
+  const { messages, isLoading, error, sendMessage, cancelRequest, clearMessages } = useChat(currentSessionId, updateSessionTitle);
 
   const handleNewChat = async () => {
     const newSessionId = await createNewSession();
@@ -63,6 +63,7 @@ export default function ChatInterface() {
         isLoading={isLoading}
         error={error}
         onSendMessage={handleSendMessage}
+        onCancelRequest={cancelRequest}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         isSidebarOpen={isSidebarOpen}
         onOpenSettings={() => setIsSettingsOpen(true)}

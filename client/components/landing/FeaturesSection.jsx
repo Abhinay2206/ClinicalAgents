@@ -49,9 +49,9 @@ const container = {
 
 const item = {
   hidden: { opacity: 0, y: 60, scale: 0.9 },
-  show: { 
-    opacity: 1, 
-    y: 0, 
+  show: {
+    opacity: 1,
+    y: 0,
     scale: 1,
     transition: {
       type: "spring",
@@ -72,17 +72,17 @@ export default function FeaturesSection() {
   const opacity = useTransform(scrollYProgress, [0, 0.2, 0.8, 1], [0, 1, 1, 0]);
 
   return (
-    <section 
-      id="features" 
+    <section
+      id="features"
       ref={sectionRef}
       className="relative py-32 px-4 bg-[var(--bg-primary)] scroll-mt-20 overflow-hidden"
     >
       {/* Parallax decorative elements */}
-      <motion.div 
+      <motion.div
         className="absolute top-20 right-10 w-64 h-64 rounded-full bg-[#00ADB5]/5 blur-3xl pointer-events-none"
         style={{ y, opacity }}
       />
-      <motion.div 
+      <motion.div
         className="absolute bottom-20 left-10 w-80 h-80 rounded-full bg-[#00C6FF]/5 blur-3xl pointer-events-none"
         style={{ y: useTransform(scrollYProgress, [0, 1], [-100, 100]), opacity }}
       />
@@ -102,9 +102,9 @@ export default function FeaturesSection() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-[#00ADB5]/10 to-[#00C6FF]/10 border border-[#00ADB5]/20 mb-8 backdrop-blur-sm"
           >
-            <motion.span 
+            <motion.span
               className="w-2 h-2 rounded-full bg-[#00ADB5]"
-              animate={{ 
+              animate={{
                 scale: [1, 1.2, 1],
                 opacity: [1, 0.7, 1]
               }}
@@ -112,8 +112,8 @@ export default function FeaturesSection() {
             />
             <span className="text-sm font-medium text-[var(--accent-teal)] tracking-wide">AI POWERED</span>
           </motion.div>
-          
-          <motion.h2 
+
+          <motion.h2
             className="text-4xl md:text-6xl font-bold text-[var(--text-primary)] mb-6"
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -122,8 +122,8 @@ export default function FeaturesSection() {
           >
             Intelligent Features
           </motion.h2>
-          
-          <motion.p 
+
+          <motion.p
             className="text-lg md:text-xl text-[var(--text-secondary)] max-w-2xl mx-auto"
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -144,10 +144,10 @@ export default function FeaturesSection() {
           style={{ perspective: "1000px" }}
         >
           {features.map((feature, index) => (
-            <motion.div 
-              key={index} 
+            <motion.div
+              key={index}
               variants={item}
-              whileHover={{ 
+              whileHover={{
                 y: -12,
                 rotateX: 5,
                 scale: 1.02,
@@ -157,11 +157,11 @@ export default function FeaturesSection() {
             >
               <Card className="h-full group cursor-pointer overflow-hidden relative border-[var(--border-subtle)] hover:border-[#00ADB5]/40 transition-all duration-500 backdrop-blur-sm bg-[var(--bg-tertiary)]/80">
                 {/* Animated gradient on hover */}
-                <motion.div 
+                <motion.div
                   className={`absolute inset-0 bg-gradient-to-br ${feature.gradient} opacity-0 group-hover:opacity-[0.05] transition-opacity duration-700`}
                   initial={false}
                 />
-                
+
                 {/* Glow effect */}
                 <motion.div
                   className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
@@ -169,11 +169,11 @@ export default function FeaturesSection() {
                     background: `radial-gradient(circle at 50% 50%, ${feature.color}10 0%, transparent 70%)`
                   }}
                 />
-                
+
                 <CardHeader className="space-y-4 relative z-10">
-                  <motion.div 
+                  <motion.div
                     className={`w-12 h-12 rounded-xl bg-gradient-to-br ${feature.gradient} flex items-center justify-center shadow-lg`}
-                    whileHover={{ 
+                    whileHover={{
                       rotate: [0, -10, 10, -10, 0],
                       scale: 1.1
                     }}

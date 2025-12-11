@@ -62,33 +62,123 @@ class SafetyAgent(LLMAgent):
         data = self.fetch_safety_data(drug_name)
         
         if not data:
-            # Provide general safety analysis when FDA data is not available
+            # Provide analysis based on established knowledge when FDA data is not available
             prompt = f"""
-            You are a clinical safety expert providing information to patients and healthcare professionals.
-            Provide a general safety assessment for {drug_name} based on established medical knowledge.
+            You are a clinical safety expert providing comprehensive information to patients and healthcare professionals.
+            Analyze the safety profile for the specific drug: {drug_name}
             
-            Structure your response in TWO sections:
+            CRITICAL REQUIREMENTS - YOU MUST:
+            1. Reference "{drug_name}" specifically throughout your entire response
+            2. Provide AT LEAST 8-10 specific data points with frequencies, percentages, or concrete metrics
+            3. Use markdown formatting with headers, tables, and bullet points
+            4. Include severity classifications for all adverse events
+            5. If you genuinely lack ANY specific data about {drug_name}, respond ONLY with:
+               "I don't have sufficient specific safety data for {drug_name}. Please consult FDA labeling or a healthcare professional."
+            6. DO NOT provide generic safety information - every statement must be specific to {drug_name}
+            7. Include statistical data, clinical trial results, and real-world evidence where available
+            8. Use structured tables for side effect profiles and drug interactions
             
-            **PATIENT-FRIENDLY SUMMARY** (Write in simple, clear language):
-            - Explain the main safety concerns in plain terms
-            - List the most common side effects patients should know about
-            - Mention who should NOT take this medication (contraindications)
-            - Note any serious warnings (if applicable)
-            - Provide simple safety tips
-            - Keep it brief (3-4 paragraphs)
+            Structure your response using this EXACT format:
             
-            **DETAILED TECHNICAL ANALYSIS**:
-            1. **Common Safety Profile**: General safety considerations and contraindications
-            2. **Typical Side Effects**: Most commonly reported adverse reactions with frequencies
-            3. **Special Populations**: Safety considerations for elderly, pregnant women, children
-            4. **Drug Interactions**: Major classes of medications that may interact
-            5. **Monitoring Requirements**: What parameters should be monitored during treatment
-            6. **Risk Factors**: Patient conditions that may increase risk
-            7. **Risk Mitigation Strategies**: How to minimize adverse events
+            # Safety Profile: {drug_name}
             
-            Note: This analysis is based on general medical knowledge. For specific safety information, consult FDA-approved labeling and clinical guidelines.
+            ## 🎯 Executive Summary
+            - **Risk Level**: [Low/Moderate/High] - with justification
+            - **Most Common Side Effects**: [Top 3-5 with specific percentages]
+            - **Serious Risks**: [Critical warnings with incidence rates]
+            - **Contraindications**: [Who should absolutely NOT use this]
+            - **Patient Exposure Data**: [Number of patients studied, if known]
             
-            Always start with the PATIENT-FRIENDLY SUMMARY first.
+            ## 📋 Patient-Friendly Overview
+            
+            [3-4 clear paragraphs explaining in simple terms:
+            - What {drug_name} is and what it treats
+            - Main safety concerns patients should know
+            - Common side effects they might experience with frequencies
+            - Important warnings and who should avoid it
+            - When to seek medical attention]
+            
+            ## 📊 Adverse Event Profile
+            
+            ### Very Common (≥10% incidence)
+            | Side Effect | Frequency | Severity | Typical Onset | Management |
+            |-------------|-----------|----------|---------------|------------|
+            | [List each] | [%] | [Mild/Mod/Severe] | [Timeframe] | [Brief guidance] |
+            
+            ### Common (1-10% incidence)
+            | Side Effect | Frequency | Severity | Typical Onset | Management |
+            |-------------|-----------|----------|---------------|------------|
+            | [List each] | [%] | [Mild/Mod/Severe] | [Timeframe] | [Brief guidance] |
+            
+            ### Serious Adverse Events (Any frequency)
+            | Event | Frequency | Risk Factors | Warning Signs | Action Required |
+            |-------|-----------|--------------|---------------|-----------------|
+            | [List each serious risk] | [%] | [Who is at higher risk] | [What to watch for] | [What to do] |
+            
+            ## 🔬 Clinical Safety Data
+            - **Patient Exposure**: [N patients in clinical trials, post-marketing surveillance data]
+            - **Study Duration**: [How long patients were followed]
+            - **Key Clinical Trials**: [Reference major safety studies if known]
+            - **Long-term Safety**: [Available data on extended use]
+            
+            ## ⚠️ Black Box Warnings & Contraindications
+            
+            ### Absolute Contraindications
+            - **[Condition/Situation 1]**: [Detailed explanation]
+            - **[Condition/Situation 2]**: [Detailed explanation]
+            
+            ### Warnings & Precautions
+            - **[Warning 1]**: [Detailed explanation with risk data]
+            - **[Warning 2]**: [Detailed explanation with risk data]
+            
+            ## 👥 Special Populations
+            
+            ### Pregnancy & Lactation
+            - **Pregnancy Category**: [Category if applicable]
+            - **Risk Assessment**: [Specific data for {drug_name}]
+            - **Breastfeeding**: [Safety information]
+            
+            ### Pediatric Use
+            - **Safety Data**: [Age-specific information]
+            - **Dosing Considerations**: [If relevant]
+            
+            ### Geriatric Use
+            - **Special Risks**: [Age-related concerns]
+            - **Dose Adjustments**: [If needed]
+            
+            ### Renal/Hepatic Impairment
+            - **Renal**: [Dose adjustments, monitoring]
+            - **Hepatic**: [Dose adjustments, monitoring]
+            
+            ## 💊 Drug Interactions
+            
+            | Interacting Drug/Class | Interaction Type | Severity | Clinical Effect | Management |
+            |------------------------|------------------|----------|-----------------|------------|
+            | [Drug 1] | [Mechanism] | [Major/Moderate/Minor] | [What happens] | [How to handle] |
+            | [Drug 2] | [Mechanism] | [Major/Moderate/Minor] | [What happens] | [How to handle] |
+            
+            ## 🔍 Monitoring Requirements
+            - **Baseline**: [What to check before starting]
+            - **Ongoing**: [Regular monitoring needed]
+            - **Frequency**: [How often]
+            - **Parameters to Watch**: [Specific values/signs]
+            
+            ## 💡 Risk Mitigation Strategies
+            1. **[Strategy 1]**: [Detailed guidance]
+            2. **[Strategy 2]**: [Detailed guidance]
+            3. **[Strategy 3]**: [Detailed guidance]
+            
+            ## 📋 Bottom Line: Key Takeaways
+            1. **[Most critical safety point]**
+            2. **[Second most important point]**
+            3. **[Third key point]**
+            4. **[When to seek immediate medical attention]**
+            5. **[Important reminder about monitoring/compliance]**
+            
+            ---
+            *Note: This analysis is for educational purposes. Always consult healthcare professionals for medical advice.*
+            
+            REMEMBER: Every data point must be specific to {drug_name}. Use tables and structured formatting throughout.
             """
             return self.run(prompt)
         
@@ -108,33 +198,135 @@ class SafetyAgent(LLMAgent):
             safety_info.append(info)
         
         prompt = f"""
-        You are a clinical safety expert providing information to patients and healthcare professionals.
-        Analyze the following FDA drug label safety information for {drug_name}:
+        You are a clinical safety expert providing comprehensive information to patients and healthcare professionals.
+        Analyze the following FDA drug label safety information for the specific drug: {drug_name}
         
+        FDA DATA:
         {safety_info}
         
-        Structure your response in TWO sections:
+        CRITICAL REQUIREMENTS - YOU MUST:
+        1. Reference "{drug_name}" specifically throughout your response
+        2. Extract and present ALL specific data from the FDA label (exact frequencies, percentages, numbers)
+        3. Use markdown formatting with headers, tables, and structured lists
+        4. DO NOT add generic safety information beyond what's in the FDA data
+        5. Focus exclusively on {drug_name} - extract every specific data point available
+        6. Include ALL adverse event rates, drug interactions, and warnings from the data
+        7. Present data in structured tables for easy scanning
+        8. Preserve exact FDA language for black box warnings
         
-        **PATIENT-FRIENDLY SUMMARY** (Write in simple, clear language):
-        - Start with the most critical safety information (black box warnings if present)
-        - List common side effects in order of importance
-        - Explain who should avoid this medication
-        - Mention important drug interactions in plain language
-        - Provide practical safety advice
-        - Keep it concise (3-4 paragraphs)
+        Structure your response using this EXACT format:
         
-        **DETAILED TECHNICAL ANALYSIS**:
-        1. Black box warnings (if any) - most serious warnings
-        2. Major contraindications - when NOT to use
-        3. Common adverse reactions and their frequencies
-        4. Significant drug interactions with mechanisms
-        5. Special precautions and populations at risk
-        6. Monitoring requirements and parameters
-        7. Overall risk assessment and recommendations
-        8. Risk mitigation strategies
+        # Safety Profile: {drug_name}
         
-        Focus on clinically relevant safety concerns and actionable guidance.
-        Always start with the PATIENT-FRIENDLY SUMMARY first.
+        ## 🎯 Executive Summary (From FDA Data)
+        - **Risk Level**: [Based on black box warnings and serious adverse events]
+        - **Most Common Side Effects**: [Extract top 5 with exact percentages from FDA data]
+        - **Serious Risks**: [List all serious adverse events with rates]
+        - **Contraindications**: [List all from FDA data]
+        - **Brand Names**: {safety_info[0].get('brand_names', []) if safety_info else 'N/A'}
+        
+        ## 📋 Patient-Friendly Overview
+        
+        [3-4 clear paragraphs in simple language explaining:
+        - What {drug_name} is used for (from FDA indications)
+        - The most important safety information from the FDA label
+        - Common side effects patients should expect (with frequencies from data)
+        - Serious warnings and when to seek immediate medical help
+        - Who should not take this medication (contraindications from FDA)]
+        
+        ## ⚠️ FDA Black Box Warnings
+        
+        {f"### CRITICAL WARNING" if safety_info and any(label.get('boxed_warning') for label in safety_info) else ""}
+        
+        [Extract and present VERBATIM all black box warnings from the FDA data. If none exist, state "No black box warnings in FDA data."]
+        
+        ## 📊 Adverse Event Profile (From FDA Clinical Trials)
+        
+        ### Very Common Side Effects (≥10% incidence)
+        | Side Effect | Frequency | Details from FDA Label |
+        |-------------|-----------|------------------------|
+        | [Extract each] | [Exact %] | [Any additional context from FDA data] |
+        
+        ### Common Side Effects (1-10% incidence)
+        | Side Effect | Frequency | Details from FDA Label |
+        |-------------|-----------|------------------------|
+        | [Extract each] | [Exact %] | [Any additional context from FDA data] |
+        
+        ### Serious Adverse Events
+        | Event | Frequency | Risk Factors | FDA Guidance |
+        |-------|-----------|--------------|--------------|
+        | [List all serious events from FDA data] | [Rate] | [If specified] | [Management guidance] |
+        
+        ## 🚫 Contraindications (From FDA Label)
+        
+        ### Absolute Contraindications
+        [Extract and list ALL contraindications from FDA data with full explanations]
+        
+        1. **[Contraindication 1]**: [Full FDA explanation]
+        2. **[Contraindication 2]**: [Full FDA explanation]
+        
+        ## ⚡ Warnings & Precautions (From FDA Label)
+        
+        [Extract ALL warnings and precautions with complete explanations]
+        
+        - **[Warning 1]**: [Detailed FDA guidance with any statistical data]
+        - **[Warning 2]**: [Detailed FDA guidance with any statistical data]
+        
+        ## 💊 Drug Interactions (From FDA Label)
+        
+        | Interacting Drug/Class | Interaction Mechanism | Clinical Effect | FDA Management Guidance |
+        |------------------------|----------------------|-----------------|-------------------------|
+        | [Extract each interaction] | [Mechanism if specified] | [Effect from FDA data] | [FDA recommendations] |
+        
+        ## 👥 Special Populations (FDA Guidance)
+        
+        ### Pregnancy & Lactation
+        - **Pregnancy**: [Extract exact FDA pregnancy guidance]
+        - **Lactation**: [Extract exact FDA breastfeeding guidance]
+        - **Contraception**: [If FDA specifies contraception requirements]
+        
+        ### Pediatric Use
+        [Extract complete FDA pediatric safety information]
+        
+        ### Geriatric Use
+        [Extract complete FDA geriatric safety information]
+        
+        ### Renal Impairment
+        [Extract FDA guidance on renal impairment]
+        
+        ### Hepatic Impairment
+        [Extract FDA guidance on hepatic impairment]
+        
+        ## 🔍 FDA-Recommended Monitoring
+        
+        [Extract all monitoring requirements from FDA label]
+        
+        - **Before Starting**: [Baseline requirements]
+        - **During Treatment**: [Ongoing monitoring]
+        - **Parameters to Monitor**: [Specific tests/values]
+        - **Frequency**: [How often per FDA guidance]
+        
+        ## 📋 Bottom Line: Critical Safety Points
+        
+        Based on the FDA label analysis:
+        
+        1. **[Most critical safety issue from black box/warnings]**
+        2. **[Most common adverse event with frequency]**
+        3. **[Key contraindication]**
+        4. **[Important drug interaction]**
+        5. **[Critical monitoring requirement]**
+        
+        ---
+        
+        ## 📄 Data Source Summary
+        - **Generic Name(s)**: {safety_info[0].get('drug', 'N/A') if safety_info else 'N/A'}
+        - **Brand Name(s)**: {', '.join(safety_info[0].get('brand_names', [])) if safety_info and safety_info[0].get('brand_names') else 'N/A'}
+        - **FDA Labels Analyzed**: {len(safety_info)}
+        
+        ---
+        *Note: This analysis is based on FDA-approved labeling. Always consult healthcare professionals for medical advice.*
+        
+        REMEMBER: Extract EVERY specific data point from the FDA data. Use exact frequencies and preserve FDA language for warnings.
         """
         
         return self.run(prompt)
@@ -214,46 +406,90 @@ class SafetyAgent(LLMAgent):
         
         return self.run(prompt)
 
+    def extract_entity_with_llm(self, query):
+        """Use LLM to extract the drug or disease name from the query"""
+        prompt = f"""
+        You are a medical entity extraction assistant. Extract the drug name OR disease name from this query.
+        
+        Instructions:
+        - Return ONLY the drug/disease name itself (e.g., "aspirin", "diabetes", "metformin")
+        - Do NOT include any explanations, prefixes, or punctuation
+        - If multiple entities exist, return the PRIMARY one being asked about
+        - For drug safety questions, prioritize the drug name
+        - If no clear entity exists, return: UNKNOWN
+        
+        Examples:
+        Query: "What are the safety details about aspirin?" → aspirin
+        Query: "Side effects of metformin for diabetes" → metformin
+        Query: "Is ibuprofen safe?" → ibuprofen
+        Query: "Tell me about cancer trials" → cancer
+        
+        Query: "{query}"
+        
+        Entity:
+        """
+        
+        try:
+            entity = self.llm.generate(prompt, max_tokens=50, temperature=0.1).strip()
+            # Clean up the response
+            entity = entity.replace('"', '').replace("'", '').replace('Entity:', '').strip()
+            # Remove trailing period if present
+            if entity.endswith('.'):
+                entity = entity[:-1]
+            # Remove common prefixes that LLM might add
+            for prefix in ['The entity is', 'Entity:', 'Answer:']:
+                if entity.startswith(prefix):
+                    entity = entity[len(prefix):].strip()
+            
+            if entity and entity.upper() != 'UNKNOWN' and len(entity) > 1:
+                print(f"✓ LLM extracted entity: '{entity}' from '{query}'")
+                return entity
+            else:
+                print(f"⚠ LLM could not extract entity from: '{query}'")
+                return "UNKNOWN"
+        except Exception as e:
+            print(f"❌ Error extracting entity with LLM: {e}")
+            return "UNKNOWN"
+
     def analyze(self, query, analysis_type="auto"):
         """
         Main analysis method that routes to drug or disease analysis
         Extracts clean entity names from queries before processing
         """
-        # Clean the query - remove common prefixes that might be in the query
-        clean_query = query.strip()
+        original_query = query.strip()
+        print(f"\n🔍 Safety Agent received query: '{original_query}'")
         
-        # Remove common question patterns to get just the entity name
-        patterns_to_remove = [
-            r'^review clinical safety profile for:\s*',
-            r'^analyze safety (of|for)\s*',
-            r'^what (are|is) the (side effects?|safety|risks?) (of|for)\s*',
-            r'^is\s+.*?\s+safe(\s+for)?',
-            r'^safety (of|for)\s*',
-            r'^\s*provide.*?for:\s*',
-        ]
+        # Always try LLM extraction first for best accuracy
+        extracted_entity = self.extract_entity_with_llm(original_query)
         
-        import re
-        for pattern in patterns_to_remove:
-            clean_query = re.sub(pattern, '', clean_query, flags=re.IGNORECASE).strip()
-        
-        # Remove trailing question marks and extra whitespace
-        clean_query = clean_query.rstrip('?').strip()
-        
-        # If the cleaned query is too long (>50 chars), it's likely still a full sentence
-        # In this case, try to extract just the drug/disease name
-        if len(clean_query) > 50:
-            print(f"⚠️ Query seems too long ({len(clean_query)} chars), attempting to extract entity...")
-            # Try to find drug/disease name in the query
-            words = clean_query.split()
-            # Take the first few meaningful words (skip common words)
-            skip_words = {'the', 'a', 'an', 'for', 'in', 'on', 'with', 'patients', 'patient', 'people'}
-            meaningful_words = [w for w in words if w.lower() not in skip_words]
-            if meaningful_words:
-                # Take first 1-3 words as the likely entity name
-                clean_query = ' '.join(meaningful_words[:3])
-                print(f"Extracted entity: {clean_query}")
-        
-        print(f"Safety agent analyzing: '{clean_query}' (type: {analysis_type})")
+        # Use extracted entity if valid, otherwise try simple regex cleanup
+        if extracted_entity and extracted_entity != "UNKNOWN":
+            clean_query = extracted_entity
+            print(f"✓ Using LLM-extracted entity: '{clean_query}'")
+        else:
+            # Fallback: simple regex-based cleaning
+            import re
+            clean_query = original_query
+            
+            # Remove common question patterns to get just the entity name
+            patterns_to_remove = [
+                r'^review clinical safety profile for:\s*',
+                r'^analyze safety (of|for)\s*',
+                r'^what (are|is) the (side effects?|safety|risks?) (of|for)\s*',
+                r'^is\s+.*?\s+safe(\s+for)?',
+                r'^safety (of|for)\s*',
+                r'^\s*provide.*?for:\s*',
+                r'^safety details about\s*',
+                r'^tell me about\s*',
+                r'^i want to know about\s*',
+            ]
+            
+            for pattern in patterns_to_remove:
+                clean_query = re.sub(pattern, '', clean_query, flags=re.IGNORECASE).strip()
+            
+            # Remove trailing question marks and extra whitespace
+            clean_query = clean_query.rstrip('?').strip()
+            print(f"⚠ Using regex-cleaned query: '{clean_query}'")
         
         # Auto-detect analysis type if not specified
         if analysis_type == "auto":
@@ -268,8 +504,12 @@ class SafetyAgent(LLMAgent):
             query_lower = clean_query.lower()
             if any(keyword in query_lower for keyword in disease_keywords):
                 analysis_type = "disease"
+                print(f"📋 Detected disease query, type: {analysis_type}")
             else:
                 analysis_type = "drug"
+                print(f"💊 Detected drug query, type: {analysis_type}")
+        
+        print(f"🎯 Safety agent analyzing: '{clean_query}' (type: {analysis_type})")
         
         if analysis_type == "drug":
             return self.analyze_drug_safety(clean_query)

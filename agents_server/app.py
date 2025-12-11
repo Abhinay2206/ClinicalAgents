@@ -9,10 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from gemini_client import GeminiClient
-from agents.human_proxy_agent import HumanProxyAgent
+from llm_client import GrokClient
 from storage.mongo_async import AsyncMongoStore
-from simple_dynamic_orchestrator import SimpleDynamicOrchestrator
 from models import UserRegister, UserLogin, TokenResponse, UserResponse, SessionCreate, SessionResponse
 from auth import (
     get_password_hash, 
@@ -46,7 +44,7 @@ class EnrollmentPredictionResponse(BaseModel):
 
 
 load_dotenv()
-app = FastAPI(title="ClinicalAgents API", version="0.1.0")
+app = FastAPI(title="ClinicalAgents API - v2.0", version="2.0.0")
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -58,29 +56,32 @@ app.add_middleware(
 )
 
 # Global singletons for performance - initialized once at startup
-_llm_client: Optional[GeminiClient] = None
+_llm_client: Optional[GrokClient] = None
 _mongo_store: Optional[AsyncMongoStore] = None
-_orchestrator: Optional[SimpleDynamicOrchestrator] = None
 _ml_predictor: Optional[Any] = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize expensive resources once at startup"""
-    global _llm_client, _mongo_store, _orchestrator, _ml_predictor
-    print("🚀 Initializing application resources...")
+    global _llm_client, _mongo_store, _ml_predictor
+    print("🚀 Initializing ClinicalAgent 2.0...")
     
     # Initialize LLM client (lightweight)
-    _llm_client = GeminiClient(model_name="gemini-2.5-flash")
+    _llm_client = GrokClient()
     print("✓ LLM client initialized")
     
     # Initialize MongoDB store (connection pool)
     _mongo_store = AsyncMongoStore()
     print("✓ MongoDB store initialized")
     
-    # Initialize orchestrator with all agents (heavy - do once)
-    _orchestrator = SimpleDynamicOrchestrator(_llm_client)
-    print("✓ Orchestrator and agents initialized")
+    # Verify LangGraph v2 availability
+    try:
+        from langgraph_v2.config import Config
+        Config.print_status()
+        print("✓ ClinicalAgent 2.0 LangGraph workflow ready")
+    except Exception as e:
+        print(f"⚠️ LangGraph v2 check failed: {e}")
     
     # Initialize ML predictor (optional - may not have model yet)
     try:
@@ -96,15 +97,6 @@ async def startup_event():
     
     print("🎉 Application ready!")
 
-
-def _new_proxy(session_id: Optional[str] = None) -> HumanProxyAgent:
-    """Create a lightweight proxy using shared resources"""
-    return HumanProxyAgent(
-        llm=_llm_client,
-        store=_mongo_store,
-        orchestrator=_orchestrator,
-        session_id=session_id
-    )
 
 
 # Dependency to inject store into get_current_user
@@ -331,13 +323,20 @@ async def update_session(
         )
 
 
-# ---------- Chat Endpoints (Updated with Authentication) ----------
+# ---------- Chat Endpoints (ClinicalAgent 2.0) ----------
 
 @app.post("/chat")
 async def chat(
     req: ChatRequest,
     current_user: UserResponse = Depends(get_current_user_with_store)
 ):
+    """
+    Main chat endpoint - Uses ClinicalAgent 2.0 LangGraph workflow
+    
+    Supports both:
+    - Numbered format for trial predictions: (1) drug: ... (2) disease: ...
+    - General clinical trial questions
+    """
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt is required")
     
@@ -364,7 +363,7 @@ async def chat(
                     detail="Not authorized to access this session"
                 )
         
-        # Save user message with user_id
+        #Save user message
         await _mongo_store.save_chat_message_with_user(
             user_id=current_user.id,
             session_id=session_id,
@@ -372,30 +371,105 @@ async def chat(
             content=req.prompt
         )
         
-        # Process with proxy (pass user_id for memory integration)
-        proxy = _new_proxy(session_id=session_id)
-        result = await proxy.handle_user_prompt_async(req.prompt, user_id=current_user.id)
+        # Check if this is a trial prediction request (multiple formats supported)
+        import re
+        from trial_input_parser import parse_trial_input, format_to_numbered
         
-        # Save assistant response with user_id
+        # Try numbered format first (existing format)
+        is_numbered_format = bool(re.search(r'\(1\)\s*drug:', req.prompt, re.IGNORECASE))
+        
+        if is_numbered_format:
+            # Use prompt as-is for numbered format
+            trial_input = req.prompt
+            is_trial_prediction = True
+        else:
+            # Try parsing natural language format
+            parsed_trial = parse_trial_input(req.prompt)
+            if parsed_trial:
+                # Convert to numbered format for workflow
+                trial_input = format_to_numbered(parsed_trial)
+                is_trial_prediction = True
+            else:
+                is_trial_prediction = False
+                trial_input = None
+        
+        if is_trial_prediction:
+            # Use LangGraph v2 workflow for trial predictions
+            from langgraph_v2.workflow import ClinicalTrialWorkflow
+            
+            workflow = ClinicalTrialWorkflow(verbose=False)
+            prediction_result = workflow.predict(trial_input)
+            
+            # Format response with FULL agent reports for proper UI rendering
+            final_output = f"""🎯 Clinical Trial Prediction
+
+**Prediction**: {prediction_result['prediction']}  
+**Confidence**: {int(prediction_result['confidence'] * 100)}%
+
+---
+
+## 📊 Step-by-Step Analysis
+
+{prediction_result['reasoning']}
+
+---
+
+**Agent Reports:**
+
+**Enrollment**: {prediction_result['reports']['enrollment'] or 'No enrollment report available'}
+
+**Safety**: {prediction_result['reports']['safety'] or 'No safety report available'}
+
+**Efficacy**: {prediction_result['reports']['efficacy'] or 'No efficacy report available'}
+"""
+            
+            result = {
+                "final_output": final_output,
+                "session_id": session_id,
+                "prediction": prediction_result['prediction'],
+                "confidence": prediction_result['confidence'],
+                "activated_agents": ["ClinicalAgent 2.0"],
+                "status": "success",
+                "agent_results": prediction_result
+            }
+        else:
+            # For general questions, use simple LLM response
+            response = _llm_client.generate(
+                f"You are a helpful clinical trial assistant. Answer this question: {req.prompt}",
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            result = {
+                "final_output": response,
+                "session_id": session_id,
+                "activated_agents": ["General LLM"],
+                "status": "success"
+            }
+        
+        # Save assistant response
         await _mongo_store.save_chat_message_with_user(
             user_id=current_user.id,
             session_id=session_id,
             role="assistant",
-            content=result.get("final_output", ""),
+            content=result["final_output"],
             agent_outputs=result
         )
         
-        # Add session_id to response
-        result["session_id"] = session_id
         return result
+        
     except HTTPException:
         raise
     except Exception as e:
         print(f"❌ Chat error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500, 
             detail=f"Failed to process chat request: {str(e)}"
         )
+
+
 
 
 
@@ -404,6 +478,7 @@ async def history(
     session_id: str,
     current_user: UserResponse = Depends(get_current_user_with_store)
 ):
+    """Get conversation history for a session"""
     if not session_id or not session_id.strip():
         raise HTTPException(status_code=400, detail="session_id is required")
     
@@ -443,40 +518,6 @@ async def history(
         )
 
 
-@app.get("/replay/{session_id}")
-async def replay(
-    session_id: str,
-    current_user: UserResponse = Depends(get_current_user_with_store)
-):
-    if not session_id or not session_id.strip():
-        raise HTTPException(status_code=400, detail="session_id is required")
-    
-    try:
-        # Verify session belongs to user
-        session = await _mongo_store.get_session_by_id(session_id)
-        if not session:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Session not found"
-            )
-        
-        if session["user_id"] != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to access this session"
-            )
-        
-        proxy = _new_proxy(session_id=session_id)
-        data = await proxy.replay_session(session_id)
-        return data
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Replay error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to replay session: {str(e)}"
-        )
 
 
 # ---------- Feedback Endpoints ----------
@@ -839,6 +880,85 @@ async def search_trials(disease: str, limit: int = 50):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to search trials: {str(e)}"
+        )
+
+
+# ---------- ClinicalAgent 2.0 Endpoints ----------
+
+class ClinicalTrialV2Request(BaseModel):
+    """Request model for ClinicalAgent 2.0 predictions"""
+    input_text: str  # Numbered format: (1) drug: ... (2) disease: ...
+    verbose: Optional[bool] = False
+
+
+class ClinicalTrialV2Response(BaseModel):
+    """Response model for ClinicalAgent 2.0 predictions"""
+    prediction: str  # PASS or FAIL
+    confidence: float  # 0.0 to 1.0
+    reasoning: str  # Chain-of-thought explanation
+    reports: Dict[str, Optional[str]]  # Individual agent reports
+    drug_parsed: Dict[str, Optional[str]]  # Original and cleaned drug name
+    disease_parsed: Optional[str]  # Extracted disease name
+    warnings: List[str]  # Non-critical issues
+    errors: List[str]  # Critical errors
+
+
+@app.post("/api/v2/clinical-trial", response_model=ClinicalTrialV2Response)
+async def predict_clinical_trial_v2(
+    req: ClinicalTrialV2Request,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """
+    Predict clinical trial outcome using ClinicalAgent 2.0 LangGraph workflow
+    
+    **Input Format**:
+    ```
+    Features contain (1) drug: <drug_name>; (2) disease: <disease_name>; 
+    (3) inclusion criteria: <criteria>; (4) exclusion criteria: <criteria>;
+    ```
+    
+    **Example**:
+    ```json
+    {
+        "input_text": "(1) drug: Metformin tablet; (2) disease: Type 2 Diabetes; (3) inclusion criteria: Adults 18-65; (4) exclusion criteria: Kidney disease;"
+    }
+    ```
+    
+    **Returns**: PASS/FAIL prediction with confidence score and detailed agent reports
+    """
+    try:
+        from langgraph_v2.workflow import ClinicalTrialWorkflow
+        
+        # Create workflow instance
+        workflow = ClinicalTrialWorkflow(verbose=req.verbose)
+        
+        # Run prediction
+        result = workflow.predict(req.input_text)
+        
+        # Log to MongoDB for tracking
+        await _mongo_store.log_event(
+            session_id=f"v2_{current_user.id}",
+            event="clinical_trial_prediction_v2",
+            agent_name="LangGraphWorkflow",
+            content={
+                "user_id": current_user.id,
+                "input": req.input_text,
+                "prediction": result['prediction'],
+                "confidence": result['confidence']
+            },
+            status="success"
+        )
+        
+        return ClinicalTrialV2Response(**result)
+        
+    except Exception as e:
+        print(f"❌ ClinicalAgent 2.0 error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process clinical trial prediction: {str(e)}"
         )
 
 

@@ -43,11 +43,13 @@ apiClient.interceptors.response.use(
 );
 
 class ChatService {
-  async sendMessage(prompt, sessionId = null) {
+  async sendMessage(prompt, sessionId = null, signal = null) {
     try {
       const response = await apiClient.post('/chat', {
         prompt,
         session_id: sessionId,
+      }, {
+        signal, // Pass abort signal to axios
       });
 
       // Validate response structure
@@ -134,6 +136,13 @@ class ChatService {
 
     const prompt = firstPrompt.trim();
 
+    // ===== CLINICAL TRIAL PREDICTION SPECIFIC =====
+    // Extract drug and disease from trial predictions
+    const trialTitle = this.extractTrialTitle(prompt);
+    if (trialTitle) {
+      return trialTitle;
+    }
+
     // If prompt is very short, use it as-is
     if (prompt.length <= 40) {
       return prompt;
@@ -149,6 +158,38 @@ class ChatService {
 
     // Fallback: truncate intelligently
     return this.intelligentTruncate(prompt);
+  }
+
+  /**
+   * Extract drug/disease names from clinical trial prediction requests
+   */
+  extractTrialTitle(text) {
+    const patterns = [
+      // Numbered format: (1) drug: X; (2) disease: Y
+      /\(1\)\s*drug:\s*([^;]+).*?\(2\)\s*disease:\s*([^;]+)/i,
+      // Natural format: drug: X ... disease: Y
+      /drug:\s*([^;\n]+).*?disease:\s*([^;\n]+)/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match && match[1] && match[2]) {
+        const drug = match[1].trim().replace(/\s+/g, ' ');
+        const disease = match[2].trim().replace(/\s+/g, ' ');
+
+        // Create concise title: "Drug for Disease"
+        const title = `${drug} for ${disease}`;
+
+        // Limit to 50 chars
+        if (title.length > 50) {
+          return title.substring(0, 47) + '...';
+        }
+
+        return title;
+      }
+    }
+
+    return null;
   }
 
   extractKeywords(text) {
