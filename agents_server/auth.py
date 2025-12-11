@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt  # Use bcrypt directly instead of passlib
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -18,9 +18,6 @@ load_dotenv()
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRATION_DAYS", "7"))
-
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # HTTP Bearer token scheme
 security = HTTPBearer()
@@ -41,14 +38,18 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash"""
     # Pre-hash the plain password before verification
     pre_hashed = _pre_hash_password(plain_password)
-    return pwd_context.verify(pre_hashed, hashed_password)
+    # Use bcrypt directly
+    return bcrypt.checkpw(pre_hashed.encode('utf-8'), hashed_password.encode('utf-8'))
 
 
 def get_password_hash(password: str) -> str:
     """Hash a password"""
     # Pre-hash the password before passing to bcrypt
     pre_hashed = _pre_hash_password(password)
-    return pwd_context.hash(pre_hashed)
+    # Use bcrypt directly to avoid passlib's strict validation
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(pre_hashed.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

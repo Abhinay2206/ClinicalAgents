@@ -66,13 +66,14 @@ export function useSessions() {
       setSessions(prev => {
         const updated = prev.filter(s => s.id !== sessionId);
 
-        // If deleting current session, switch to another
+        // If deleting current session, switch to another or clear
         if (sessionId === currentSessionId) {
           if (updated.length > 0) {
             setCurrentSessionId(updated[0].id);
           } else {
-            // Create a new session if all deleted
-            createNewSession();
+            // Don't auto-create - let user start fresh
+            // A new session will be created when they send their first message
+            setCurrentSessionId(null);
           }
         }
 
@@ -82,7 +83,7 @@ export function useSessions() {
       console.error('Failed to delete session:', err);
       throw err;
     }
-  }, [currentSessionId, createNewSession]);
+  }, [currentSessionId]);
 
   const updateSessionTitle = useCallback((sessionId, title) => {
     setSessions(prev => prev.map(s =>

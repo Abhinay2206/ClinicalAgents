@@ -1,1 +1,54 @@
+# OS Files
 .DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite3
+
+# Test Files
+test_*.py
+*_test.py
+tests/
+__tests__/
+
+# Node.js (for client)
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# ML Models (optional - uncomment if models are large)
+# *.pt
+# *.pth
+# *.h5
+# *.pkl

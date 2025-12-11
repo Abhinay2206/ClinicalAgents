@@ -14,6 +14,7 @@ openai
 motor
 tenacity
 pydantic
+email-validator
 fastapi
 uvicorn
 python-jose[cryptography]
