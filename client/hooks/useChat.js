@@ -52,8 +52,11 @@ export function useChat(sessionId, updateSessionTitle) {
     }
   }, [sessionId, loadHistory]);
 
-  const sendMessage = useCallback(async (content) => {
+  const sendMessage = useCallback(async (content, explicitSessionId = null) => {
     if (!content.trim()) return;
+
+    // Use explicit session ID if provided, otherwise use hook's sessionId
+    const activeSessionId = explicitSessionId || sessionId;
 
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
@@ -70,23 +73,23 @@ export function useChat(sessionId, updateSessionTitle) {
       const newMessages = [...prev, userMessage];
 
       // If this is the first message, generate and update session title
-      if (newMessages.length === 1 && sessionId) {
+      if (newMessages.length === 1 && activeSessionId) {
         // Use smart title generation
         const title = chatService.generateChatTitle(content);
 
         // Persist title to backend
-        chatService.updateSessionTitle(sessionId, title)
+        chatService.updateSessionTitle(activeSessionId, title)
           .then(() => {
             // Update local state after successful backend update
             if (updateSessionTitle) {
-              updateSessionTitle(sessionId, title);
+              updateSessionTitle(activeSessionId, title);
             }
           })
           .catch(err => {
             console.error('Failed to update session title:', err);
             // Still update local state even if backend fails
             if (updateSessionTitle) {
-              updateSessionTitle(sessionId, title);
+              updateSessionTitle(activeSessionId, title);
             }
           });
       }
@@ -98,7 +101,7 @@ export function useChat(sessionId, updateSessionTitle) {
     setError(null);
 
     try {
-      const response = await chatService.sendMessage(content, sessionId, abortControllerRef.current.signal);
+      const response = await chatService.sendMessage(content, activeSessionId, abortControllerRef.current.signal);
 
       console.log('📥 Received response from backend:', response);
 

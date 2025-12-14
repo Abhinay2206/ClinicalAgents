@@ -33,9 +33,12 @@ export default function ChatInterface() {
     if (!currentSessionId) {
       // Create a new session before sending the first message
       const newSessionId = await createNewSession();
-      // The sendMessage will use the new session ID via the hook
+      // Pass the new session ID directly to avoid race condition
+      await sendMessage(content, newSessionId);
+    } else {
+      // Use existing session
+      await sendMessage(content);
     }
-    await sendMessage(content);
   };
 
   useEffect(() => {
