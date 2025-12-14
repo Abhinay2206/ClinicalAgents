@@ -9,10 +9,6 @@ from llm_client import GrokClient
 load_dotenv()
 
 class ClinicalTrialChatbot:
-    """
-    Patient-friendly chatbot interface for clinical trial information
-    Powered by ClinicalAgent 2.0 LangGraph workflow
-    """
     
     def __init__(self):
         # Initialize LLM model

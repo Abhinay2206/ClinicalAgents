@@ -1,19 +1,19 @@
-# ClinicalAgents 🏥
+# ClinicalAgents 
 
 **ClinicalAgents** is an advanced AI-powered multi-agent system designed to revolutionize how healthcare professionals and researchers interact with clinical trial data and drug safety information. By leveraging state-of-the-art Large Language Models (LLMs) and a LangGraph orchestration framework, it automates complex tasks such as trial enrollment analysis, drug safety assessment, and clinical trial discovery.
 
 ![Architecture](docs/architecture.png)
 
-## 🌟 Key Features
+## Key Features
 
-### 🤖 ClinicalAgent 2.0 - LangGraph Workflow
+### ClinicalAgent 2.0 - LangGraph Workflow
 - **Intelligent Agent Orchestration**: Built on LangGraph for robust, stateful multi-agent workflows
 - **Enrollment Agent**: Smart patient-to-trial matching using ChromaDB vector search and ML-based success prediction
 - **Safety Agent**: Real-time FDA drug safety analysis with black box warnings and adverse event tracking
 - **Efficacy Agent**: Neo4j graph database integration for complex trial outcome analysis
 - **General Agent**: Conversational AI for general clinical trial inquiries
 
-### 💬 Premium Chat Interface
+### Premium Chat Interface
 - **Dynamic Session Management**: Create, rename, delete, and organize chat sessions with smart auto-generated titles
 - **Real-time Streaming**: Live agent responses with typing indicators and smooth animations
 - **Stop Generation**: Cancel ongoing responses with one click
@@ -21,19 +21,19 @@
 - **Agent Visualization**: See which specialist agents are processing your query
 - **Context-Aware Conversations**: Full conversation history maintained across sessions
 
-### 🔬 Clinical Trials Browser
+### Clinical Trials Browser
 - **Advanced Search**: Find relevant clinical trials by disease name
 - **Comprehensive Trial Details**: View trial status, phases, enrollment criteria, and outcomes
 - **Real-time Data**: Pulls from extensive clinical trials database
 - **Intuitive UI**: Modern, responsive design with smooth animations
 
-### 🔐 Secure & Personalized
+### Secure & Personalized
 - **JWT Authentication**: Secure user registration and login system
 - **User Profiles**: Personalized settings and preferences
 - **MongoDB Persistence**: All chat history and user data securely stored
 - **Session Isolation**: Each user's conversations are private and isolated
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### Backend (`agents_server`)
 - **Framework**: FastAPI (Python 3.11+)
@@ -55,7 +55,7 @@
 - **HTTP Client**: Axios
 - **Markdown**: React Markdown with GFM support
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 ClinicalAgent/
@@ -92,7 +92,7 @@ ClinicalAgent/
 └── docs/                       # Documentation & Assets
 ```
 
-## 🚀 Getting Started
+## Getting Started
 
 For detailed installation and setup instructions, please refer to the **[SETUP.md](SETUP.md)** file.
 
@@ -123,7 +123,7 @@ npm run dev
 
 Access the application at `http://localhost:3000`
 
-## 🔌 API Documentation
+## API Documentation
 
 Once the backend is running, access the interactive Swagger UI at:
 `http://localhost:8000/docs`
@@ -148,7 +148,7 @@ Once the backend is running, access the interactive Swagger UI at:
 - **Trials**
   - `GET /trials/search`: Search clinical trials by disease
 
-## 🎯 Use Cases
+## Use Cases
 
 1. **Trial Enrollment Analysis**: "Find suitable clinical trials for Type 2 Diabetes patients"
 2. **Drug Safety Research**: "What are the safety concerns for aspirin?"
@@ -156,7 +156,7 @@ Once the backend is running, access the interactive Swagger UI at:
 4. **Trial Discovery**: Browse and search thousands of clinical trials by disease
 5. **Research Organization**: Manage multiple research sessions with smart session titles
 
-## 🧪 How It Works
+## How It Works
 
 1. **User Query**: Type a question about clinical trials or drug safety
 2. **LangGraph Routing**: The system analyzes your query and routes it to appropriate agents
@@ -164,7 +164,7 @@ Once the backend is running, access the interactive Swagger UI at:
 4. **Response Generation**: AI synthesizes findings into comprehensive, actionable insights
 5. **Continuous Learning**: System learns from interactions to improve future responses
 
-## 🔒 Security & Privacy
+## Security & Privacy
 
 - JWT-based authentication with secure token management
 - Password hashing using industry-standard algorithms
@@ -172,7 +172,7 @@ Once the backend is running, access the interactive Swagger UI at:
 - Environment-based configuration for sensitive credentials
 - User data isolation and privacy protection
 
-## 📊 Development
+## Development
 
 ### Running Tests
 ```bash
@@ -192,11 +192,7 @@ npm test
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📝 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Built with LangGraph by LangChain
 - Powered by Grok (Llama 3.3)
@@ -205,4 +201,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-**Made with ❤️ for advancing clinical research through AI**

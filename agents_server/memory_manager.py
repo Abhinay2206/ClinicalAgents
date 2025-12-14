@@ -56,6 +56,43 @@ class MemoryManager:
         
         return memory_id
     
+    async def add_conversation_turn(
+        self,
+        session_id: str,
+        user_id: str,
+        user_query: str,
+        agent_response: str,
+        activated_agents: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Simplified API to add a complete conversation turn (Q&A pair)
+        
+        Args:
+            session_id: Session ID
+            user_id: User ID
+            user_query: User's question
+            agent_response: Agent's response
+            activated_agents: List of agents that were activated
+            metadata: Additional metadata
+            
+        Returns:
+            Memory ID
+        """
+        # Combine metadata
+        full_metadata = metadata or {}
+        if activated_agents:
+            full_metadata['activated_agents'] = activated_agents
+        
+        # Use existing add_to_memory method
+        return await self.add_to_memory(
+            session_id=session_id,
+            user_id=user_id,
+            user_message=user_query,
+            agent_response=agent_response,
+            metadata=full_metadata
+        )
+    
     async def get_relevant_context(
         self,
         session_id: str,
@@ -101,6 +138,100 @@ class MemoryManager:
         }
         
         return context
+    
+    async def get_conversation_context(
+        self,
+        session_id: str,
+        current_query: str,
+        include_last_response: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Get enriched conversation context optimized for follow-up queries
+        
+        Args:
+            session_id: Session ID
+            current_query: Current user query
+            include_last_response: Include last agent response in context
+            
+        Returns:
+            Enhanced context dict with conversation history
+        """
+        # Get base context
+        base_context = await self.get_relevant_context(session_id, current_query)
+        
+        # Add last query and response for reference resolution
+        if include_last_response and base_context['recent_messages']:
+            last_memory = base_context['recent_messages'][0]
+            base_context['last_query'] = last_memory.get('user_message', '')
+            base_context['last_response'] = last_memory.get('agent_response', '')
+        else:
+            base_context['last_query'] = ''
+            base_context['last_response'] = ''
+        
+        # Add topic tracking
+        base_context['current_topic'] = await self._detect_current_topic(session_id)
+        
+        return base_context
+    
+    async def _detect_current_topic(self, session_id: str) -> str:
+        """
+        Detect the current conversation topic from recent memory
+        """
+        recent_memory = await self.store.get_memory_state(session_id, limit=3)
+        
+        if not recent_memory:
+            return "general"
+        
+        # Aggregate entities to identify topic
+        all_drugs = []
+        all_diseases = []
+        
+        for memory in recent_memory:
+            if 'entities' in memory:
+                entities = memory['entities']
+                all_drugs.extend(entities.get('drugs', []))
+                all_diseases.extend(entities.get('diseases', []))
+        
+        # Determine topic based on most frequent entities
+        if all_drugs and all_diseases:
+            return f"{all_drugs[-1]}_for_{all_diseases[-1]}"
+        elif all_drugs:
+            return f"drug_{all_drugs[-1]}"
+        elif all_diseases:
+            return f"disease_{all_diseases[-1]}"
+        else:
+            return "general"
+    
+    def track_topics(self, text: str) -> List[str]:
+        """
+        Track topics/themes in text
+        
+        Returns:
+            List of identified topics
+        """
+        topics = []
+        
+        # Clinical trial phases
+        if re.search(r'phase (1|2|3|i|ii|iii)', text.lower()):
+            topics.append('trial_phases')
+        
+        # Safety-related
+        if any(word in text.lower() for word in ['safety', 'adverse', 'side effect', 'toxicity', 'risk']):
+            topics.append('safety')
+        
+        # Efficacy-related
+        if any(word in text.lower() for word in ['efficacy', 'effective', 'outcome', 'success', 'response rate']):
+            topics.append('efficacy')
+        
+        # Enrollment-related
+        if any(word in text.lower() for word in ['enrollment', 'recruit', 'participant', 'eligibility']):
+            topics.append('enrollment')
+        
+        # General trial info
+        if re.search(r'NCT\d{8}', text, re.IGNORECASE):
+            topics.append('specific_trial')
+        
+        return topics if topics else ['general']
     
     async def _create_summary(self, session_id: str, user_id: str) -> str:
         """

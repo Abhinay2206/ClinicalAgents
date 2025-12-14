@@ -1,25 +1,23 @@
-"""
-Feedback Manager for ClinicalAgents
-Handles human feedback collection, pattern learning, and response improvement
-"""
 from __future__ import annotations
 
 import re
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from storage.mongo_async import AsyncMongoStore
+from reference_resolver import ReferenceResolver
+from context_processor import ContextProcessor
 
 
 class FeedbackManager:
-    """
-    Manages human feedback collection and learning from feedback.
-    Enables the system to improve based on user corrections and preferences.
-    """
     
     def __init__(self, store: Optional[AsyncMongoStore] = None, llm=None):
         self.store = store or AsyncMongoStore()
         self.llm = llm
         self.confidence_threshold = 0.7  # Threshold for requesting human review
+        
+        # Initialize conversational components
+        self.reference_resolver = ReferenceResolver(llm=llm)
+        self.context_processor = ContextProcessor(llm=llm)
         
     async def collect_feedback(
         self,
@@ -392,3 +390,160 @@ class FeedbackManager:
             "common_issues": common_issues[:3],
             "improvement_areas": common_issues[:3]
         }
+    
+    async def process_followup(
+        self,
+        query: str,
+        session_id: str,
+        user_id: str,
+        conversation_history: List[Dict[str, Any]],
+        memory_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Process a follow-up query with conversational context
+        
+        Args:
+            query: User's follow-up query
+            session_id: Session ID
+            user_id: User ID
+            conversation_history: Recent conversation messages
+            memory_state: Current memory state with entities
+            
+        Returns:
+            Dict with processed query and context info
+        """
+        # Analyze query context
+        query_context = self.context_processor.analyze_query(
+            query=query,
+            conversation_history=conversation_history,
+            memory_state=memory_state
+        )
+        
+        # Get last response for context
+        last_response = memory_state.get('last_response', '')
+        
+        # Resolve references in the query
+        resolved_query = self.reference_resolver.resolve_references(
+            query=query,
+            context=memory_state
+        )
+        
+        # Enrich query with context if needed
+        if query_context.needs_context_enrichment:
+            enriched_query = self.context_processor.enrich_with_context(
+                query=resolved_query,
+                query_context=query_context,
+                memory_state=memory_state,
+                last_response=last_response
+            )
+        else:
+            enriched_query = resolved_query
+        
+        return {
+            "original_query": query,
+            "resolved_query": resolved_query,
+            "enriched_query": enriched_query,
+            "context": query_context,
+            "needs_enrichment": query_context.needs_context_enrichment,
+            "is_followup": query_context.is_followup,
+            "is_refinement": query_context.is_refinement,
+            "is_expansion": query_context.is_expansion,
+            "confidence": query_context.confidence
+        }
+    
+    async def process_suggestion(
+        self,
+        suggestion: str,
+        original_query: str,
+        original_response: str,
+        session_id: str,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """
+        Process a user suggestion/correction as a refinement
+        
+        Args:
+            suggestion: User's suggestion or correction
+            original_query: The original query
+            original_response: The original response
+            session_id: Session ID
+            user_id: User ID
+            
+        Returns:
+            Dict with refined query and metadata
+        """
+        if not self.llm:
+            return {
+                "refined_query": suggestion,
+                "refinement_type": "direct"
+            }
+        
+        # Use LLM to understand the refinement intent
+        refinement_prompt = f"""
+The user provided feedback on a response. Generate a refined query that incorporates their feedback.
+
+Original query: {original_query}
+Original response: {original_response[:500]}
+User's feedback/suggestion: {suggestion}
+
+Create a refined query that addresses the user's feedback while maintaining the original intent.
+Provide ONLY the refined query, nothing else.
+
+Refined query:"""
+        
+        try:
+            refined_query = self.llm.generate(refinement_prompt, max_tokens=200, temperature=0.3)
+            refined_query = refined_query.strip().strip('"').strip("'")
+            
+            # Determine refinement type
+            suggestion_lower = suggestion.lower()
+            if any(word in suggestion_lower for word in ['more', 'detail', 'expand', 'elaborate']):
+                refinement_type = 'expansion'
+            elif any(word in suggestion_lower for word in ['focus', 'specific', 'only']):
+                refinement_type = 'narrowing'
+            elif any(word in suggestion_lower for word in ['simple', 'easier', 'plain']):
+                refinement_type = 'simplification'
+            elif any(word in suggestion_lower for word in ['technical', 'detailed', 'scientific']):
+                refinement_type = 'technical'
+            else:
+                refinement_type = 'general'
+            
+            return {
+                "refined_query": refined_query,
+                "refinement_type": refinement_type,
+                "original_suggestion": suggestion
+            }
+        except Exception as e:
+            print(f"Error processing suggestion: {e}")
+            return {
+                "refined_query": f"{original_query}\n\nUser feedback: {suggestion}",
+                "refinement_type": "direct",
+                "error": str(e)
+            }
+    
+    def is_conversational_followup(self, query: str) -> bool:
+        """
+        Quick check if a query is likely a conversational follow-up
+        
+        Args:
+            query: User query
+            
+        Returns:
+            True if likely a follow-up
+        """
+        query_lower = query.lower().strip()
+        
+        # Very short queries with pronouns
+        if len(query.split()) <= 4:
+            if any(pronoun in query_lower for pronoun in ['it', 'that', 'this', 'its']):
+                return True
+        
+        # Common follow-up phrases
+        followup_starters = [
+            'what about', 'how about', 'and ', 'also ', 'tell me more',
+            'can you', 'could you', 'more ', 'expand', 'elaborate'
+        ]
+        if any(query_lower.startswith(starter) for starter in followup_starters):
+            return True
+        
+        return False

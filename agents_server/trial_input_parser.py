@@ -1,7 +1,3 @@
-"""
-Enhanced clinical trial input parser
-Handles both numbered format and natural language descriptions
-"""
 import re
 from typing import Dict, Optional
 

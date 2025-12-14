@@ -5,7 +5,10 @@ Provides interfaces to ChromaDB, OpenFDA, and Neo4j through existing agent imple
 
 import sys
 import os
+import asyncio
+import functools
 from typing import List, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 # Add parent directory to path to import existing agents
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,6 +35,7 @@ class ClinicalAgentTools:
         """
         self.llm = llm or GrokClient()
         self.verbose = verbose
+        self.executor = ThreadPoolExecutor(max_workers=4)  # For timeout operations
         
         # Initialize agents (with error handling)
         try:
@@ -57,6 +61,15 @@ class ClinicalAgentTools:
         except Exception as e:
             print(f"⚠️  Efficacy Agent initialization failed: {e}")
             self.efficacy_agent = None
+    
+    def _run_with_timeout(self, func, timeout_seconds, *args, **kwargs):
+        """Run a function with timeout protection"""
+        future = self.executor.submit(func, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError:
+            future.cancel()
+            raise TimeoutError(f"Operation timed out after {timeout_seconds} seconds")
     
     def search_chroma(self, criteria_text: str, top_k: int = 5) -> Dict:
         """
@@ -84,11 +97,16 @@ class ClinicalAgentTools:
         
         try:
             if self.verbose:
-                print(f"\n🔍 Searching ChromaDB for similar trials...")
+                print(f"\n🔍 Searching ChromaDB for similar trials (10s timeout)...")
                 print(f"   Criteria: {criteria_text[:100]}...")
             
-            # Use semantic search from enrollment agent
-            results = self.enrollment_agent.semantic_search(criteria_text, top_k=top_k)
+            # Use semantic search from enrollment agent with 10-second timeout
+            results = self._run_with_timeout(
+                self.enrollment_agent.semantic_search, 
+                10, 
+                criteria_text, 
+                top_k=top_k
+            )
             
             if not results:
                 return {
@@ -128,6 +146,16 @@ class ClinicalAgentTools:
                 "error": None
             }
             
+        except TimeoutError as e:
+            error_msg = f"ChromaDB search timeout: {str(e)}"
+            if self.verbose:
+                print(f"⏱️ {error_msg}")
+            return {
+                "status": "ERROR",
+                "trials": [],
+                "summary": "ChromaDB search timed out after 10 seconds",
+                "error": str(e)
+            }
         except Exception as e:
             error_msg = f"ChromaDB search error: {str(e)}"
             if self.verbose:
@@ -165,10 +193,15 @@ class ClinicalAgentTools:
         
         try:
             if self.verbose:
-                print(f"\n💊 Querying OpenFDA for drug: {drug_name}")
+                print(f"\n💊 Querying OpenFDA for drug: {drug_name} (10s timeout)...")
             
-            # Use safety agent's FDA fetcher
-            fda_data = self.safety_agent.fetch_safety_data(drug_name, limit=1)
+            # Use safety agent's FDA fetcher with 10-second timeout
+            fda_data = self._run_with_timeout(
+                self.safety_agent.fetch_safety_data,
+                10,
+                drug_name,
+                limit=1
+            )
             
             if not fda_data or len(fda_data) == 0:
                 if self.verbose:
@@ -205,6 +238,16 @@ class ClinicalAgentTools:
                 "error": None
             }
             
+        except TimeoutError as e:
+            error_msg = f"OpenFDA query timeout: {str(e)}"
+            if self.verbose:
+                print(f"⏱️ {error_msg}")
+            return {
+                "status": "ERROR",
+                "drug_name": drug_name,
+                "data": None,
+                "error": "OpenFDA query timed out after 10 seconds"
+            }
         except Exception as e:
             error_msg = f"OpenFDA query error: {str(e)}"
             if self.verbose:
@@ -247,19 +290,28 @@ class ClinicalAgentTools:
         
         try:
             if self.verbose:
-                print(f"\n🔬 Querying Neo4j HetioNet...")
+                print(f"\n🔬 Querying Neo4j HetioNet (3s timeout)...")
                 print(f"   Drug: {drug_name}, Disease: {disease_name}")
             
-            # Use efficacy agent's Neo4j fetcher
-            pathway_data = self.efficacy_agent.fetch_efficacy_data(drug_name)
+            # Use efficacy agent's Neo4j fetcher with short timeout (DB likely empty)
+            pathway_data = self._run_with_timeout(
+                self.efficacy_agent.fetch_efficacy_data,
+                3,  # Reduced from 5s - fail fast if DB empty
+                drug_name
+            )
             
             if not pathway_data or len(pathway_data) == 0:
                 if self.verbose:
-                    print(f"⚠️  No pathway evidence found in Neo4j - using LLM knowledge")
+                    print(f"⚠️  No pathway evidence in Neo4j - using medical knowledge (8s timeout)")
                 
                 # Use LLM medical knowledge for drug-disease efficacy when Neo4j has no data
+                # Add timeout to prevent very long LLM generations
                 try:
-                    llm_analysis = self.efficacy_agent.analyze(f"{drug_name} for {disease_name}")
+                    llm_analysis = self._run_with_timeout(
+                        self.efficacy_agent.analyze,
+                        8,  # Reduced from 10s for faster response
+                        f"{drug_name} for {disease_name}"
+                    )
                     return {
                         "status": "SUCCESS",
                         "drug_name": drug_name,
@@ -303,6 +355,18 @@ class ClinicalAgentTools:
                 "error": None
             }
             
+        except TimeoutError as e:
+            error_msg = f"Neo4j/Efficacy analysis timeout: {str(e)}"
+            if self.verbose:
+                print(f"⏱️ {error_msg}")
+            return {
+                "status": "ERROR",
+                "drug_name": drug_name,
+                "disease_name": disease_name,
+                "pathways": [],
+                "summary": "Efficacy analysis timed out - query too complex",
+                "error": str(e)
+            }
         except Exception as e:
             error_msg = f"Neo4j query error: {str(e)}"
             if self.verbose:

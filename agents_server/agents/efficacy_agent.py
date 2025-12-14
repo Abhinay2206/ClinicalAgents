@@ -27,6 +27,13 @@ class EfficacyAgent(LLMAgent):
                 self.driver = None
 
     def fetch_efficacy_data(self, drug_name):
+        """Query Hetionet database for compound/drug efficacy data
+        
+        Uses the actual Hetionet schema:
+        - Compounds (drugs) are stored as :Compound or :HetionetNode with kind='Compound'
+        - Relationships use :HETIONET_EDGE with metaedge property
+        - Diseases are linked to compounds via various relationship types
+        """
         if not self.driver:
             return []
 
@@ -35,19 +42,45 @@ class EfficacyAgent(LLMAgent):
         if len(dn.split()) > 3 or " for " in dn.lower():
             return []
 
-        # Basic sanitization to avoid breaking the query
-        dn_safe = dn.replace("'", "\\'")
-
         try:
-            query = (
-                "MATCH (d:Drug {name: $name})-[:HAS_OUTCOME]->(o:Outcome) "
-                "RETURN d.name AS drug, o.result AS result, o.metric AS metric, o.value AS value"
-            )
+            # Query Hetionet schema for compound information with timeout
+            # Look for Compound nodes and their relationships to Diseases
+            query = """
+            CALL {
+                MATCH (c:Compound)
+                WHERE toLower(c.name) CONTAINS toLower($name)
+                OPTIONAL MATCH (c)-[r:HETIONET_EDGE]->(d:Disease)
+                RETURN c.name AS compound, d.name AS disease, r.metaedge AS relationship_type, 'treats' AS context
+                LIMIT 10
+                
+                UNION
+                
+                MATCH (c:HetionetNode {kind: 'Compound'})
+                WHERE toLower(c.name) CONTAINS toLower($name)
+                OPTIONAL MATCH (c)-[r:HETIONET_EDGE]->(d:HetionetNode {kind: 'Disease'})
+                RETURN c.name AS compound, d.name AS disease, r.metaedge AS relationship_type, 'treats' AS context
+                LIMIT 10
+            }
+            RETURN compound, disease, relationship_type, context
+            LIMIT 20
+            """
+            
             with self.driver.session() as session:
-                results = session.run(query, name=dn_safe)
-                return [r.data() for r in results]
+                # Add timeout to prevent hanging - 5 seconds max
+                results = session.run(query, name=dn, timeout=5.0)
+                data = []
+                for r in results:
+                    record = r.data()
+                    if record.get('compound'):  # Only include if we found a match
+                        data.append(record)
+                
+                return data
+                
         except Exception as e:
-            print(f"Error querying Neo4j: {e}")
+            # Gracefully handle errors - don't log warnings for schema mismatches
+            # as this is expected when DB is empty or has different schema
+            if "does not exist" not in str(e).lower():
+                print(f"⚠️ Neo4j query issue: {e}")
             return []
 
     def extract_entity_with_llm(self, query):

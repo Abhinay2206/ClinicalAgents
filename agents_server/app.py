@@ -333,9 +333,16 @@ async def chat(
     """
     Main chat endpoint - Uses ClinicalAgent 2.0 LangGraph workflow
     
+    NOW WITH CONVERSATIONAL CONTEXT:
+    - Detects follow-up queries and resolves references
+    - Enriches queries with conversation history
+    - Maintains memory state for ChatGPT-like conversations
+    
     Supports both:
     - Numbered format for trial predictions: (1) drug: ... (2) disease: ...
     - General clinical trial questions
+    - Follow-up queries: "What about its efficacy?"
+    - Refinements: "Can you give more details?"
     """
     if not req.prompt or not req.prompt.strip():
         raise HTTPException(status_code=400, detail="prompt is required")
@@ -363,7 +370,52 @@ async def chat(
                     detail="Not authorized to access this session"
                 )
         
-        #Save user message
+        # ===== NEW: CONVERSATIONAL CONTEXT PROCESSING =====
+        from memory_manager import MemoryManager
+        from feedback_manager import FeedbackManager
+        
+        # Initialize managers
+        memory_mgr = MemoryManager(store=_mongo_store, llm=_llm_client)
+        feedback_mgr = FeedbackManager(store=_mongo_store, llm=_llm_client)
+        
+        # Load conversation history and memory state
+        conversation_history = await _mongo_store.get_session_history_for_user(
+            user_id=current_user.id,
+            session_id=session_id
+        )
+        
+        # Get enhanced conversation context
+        memory_state = await memory_mgr.get_conversation_context(
+            session_id=session_id,
+            current_query=req.prompt,
+            include_last_response=True
+        )
+        
+        # Check if this is a conversational follow-up
+        is_followup = feedback_mgr.is_conversational_followup(req.prompt)
+        
+        # Process query (original or enriched)
+        query_to_process = req.prompt
+        followup_info = None
+        
+        if is_followup and conversation_history:
+            print(f"🔄 Detected follow-up query: {req.prompt}")
+            
+            # Process as follow-up with context
+            followup_info = await feedback_mgr.process_followup(
+                query=req.prompt,
+                session_id=session_id,
+                user_id=current_user.id,
+                conversation_history=conversation_history,
+                memory_state=memory_state
+            )
+            
+            # Use enriched query for processing
+            query_to_process = followup_info['enriched_query']
+            
+            print(f"✨ Enriched query: {query_to_process}")
+        
+        # Save user message (original query)
         await _mongo_store.save_chat_message_with_user(
             user_id=current_user.id,
             session_id=session_id,
@@ -371,20 +423,21 @@ async def chat(
             content=req.prompt
         )
         
+        # ===== EXISTING: QUERY PROCESSING =====
         # Check if this is a trial prediction request (multiple formats supported)
         import re
         from trial_input_parser import parse_trial_input, format_to_numbered
         
         # Try numbered format first (existing format)
-        is_numbered_format = bool(re.search(r'\(1\)\s*drug:', req.prompt, re.IGNORECASE))
+        is_numbered_format = bool(re.search(r'\(1\)\s*drug:', query_to_process, re.IGNORECASE))
         
         if is_numbered_format:
             # Use prompt as-is for numbered format
-            trial_input = req.prompt
+            trial_input = query_to_process
             is_trial_prediction = True
         else:
             # Try parsing natural language format
-            parsed_trial = parse_trial_input(req.prompt)
+            parsed_trial = parse_trial_input(query_to_process)
             if parsed_trial:
                 # Convert to numbered format for workflow
                 trial_input = format_to_numbered(parsed_trial)
@@ -397,7 +450,13 @@ async def chat(
             # Use LangGraph v2 workflow for trial predictions
             from langgraph_v2.workflow import ClinicalTrialWorkflow
             
-            workflow = ClinicalTrialWorkflow(verbose=False)
+            print("\n" + "="*60)
+            print("🚀 Starting ClinicalAgent 2.0 Workflow")
+            if followup_info:
+                print(f"📝 Context-enriched: {followup_info['is_followup']}")
+            print("="*60)
+            
+            workflow = ClinicalTrialWorkflow(verbose=True)
             prediction_result = workflow.predict(trial_input)
             
             # Format response with FULL agent reports for proper UI rendering
@@ -423,6 +482,14 @@ async def chat(
 **Efficacy**: {prediction_result['reports']['efficacy'] or 'No efficacy report available'}
 """
             
+            # Convert followup_info context to dict for MongoDB
+            serializable_followup_info = None
+            if followup_info:
+                serializable_followup_info = {
+                    **followup_info,
+                    'context': followup_info['context'].to_dict() if followup_info.get('context') else None
+                }
+            
             result = {
                 "final_output": final_output,
                 "session_id": session_id,
@@ -430,30 +497,72 @@ async def chat(
                 "confidence": prediction_result['confidence'],
                 "activated_agents": ["ClinicalAgent 2.0"],
                 "status": "success",
-                "agent_results": prediction_result
+                "agent_results": prediction_result,
+                "context_used": is_followup,
+                "followup_info": serializable_followup_info
             }
         else:
-            # For general questions, use simple LLM response
+            # For general questions, use context-aware LLM response
+            # If follow-up, include context in prompt
+            if is_followup and memory_state.get('last_response'):
+                context_prompt = f"""You are a helpful clinical trial assistant. 
+
+Previous context:
+User asked: {memory_state.get('last_query', '')[:200]}
+You responded: {memory_state.get('last_response', '')[:500]}
+
+Current question: {query_to_process}
+
+Provide a helpful answer that builds on the previous context."""
+            else:
+                context_prompt = f"You are a helpful clinical trial assistant. Answer this question: {query_to_process}"
+            
+            
             response = _llm_client.generate(
-                f"You are a helpful clinical trial assistant. Answer this question: {req.prompt}",
-                max_tokens=500,
+                context_prompt,
+                max_tokens=2000,  # Increased from 500 to allow complete clinical responses
                 temperature=0.7
             )
+            
+            # Convert followup_info context to dict for MongoDB
+            serializable_followup_info = None
+            if followup_info:
+                serializable_followup_info = {
+                    **followup_info,
+                    'context': followup_info['context'].to_dict() if followup_info.get('context') else None
+                }
             
             result = {
                 "final_output": response,
                 "session_id": session_id,
                 "activated_agents": ["General LLM"],
-                "status": "success"
+                "status": "success",
+                "context_used": is_followup,
+                "followup_info": serializable_followup_info
             }
         
-        # Save assistant response
+        # Save assistant response with context metadata
         await _mongo_store.save_chat_message_with_user(
             user_id=current_user.id,
             session_id=session_id,
             role="assistant",
             content=result["final_output"],
             agent_outputs=result
+        )
+        
+        # ===== NEW: UPDATE MEMORY STATE =====
+        # Store this conversation turn in memory with enhanced metadata
+        await memory_mgr.add_conversation_turn(
+            session_id=session_id,
+            user_id=current_user.id,
+            user_query=req.prompt,
+            agent_response=result["final_output"],
+            activated_agents=result.get("activated_agents", []),
+            metadata={
+                "is_followup": is_followup,
+                "context_used": is_followup,
+                "topics": memory_mgr.track_topics(req.prompt + " " + result["final_output"])
+            }
         )
         
         return result
@@ -468,6 +577,7 @@ async def chat(
             status_code=500, 
             detail=f"Failed to process chat request: {str(e)}"
         )
+
 
 
 
