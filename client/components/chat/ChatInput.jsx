@@ -83,7 +83,7 @@ export default function ChatInput({ onSendMessage, onCancelRequest, isLoading })
 
         {/* Footer Text */}
         <div className="text-center text-xs text-[var(--text-tertiary)] mt-2.5">
-          Powered by Gemini · <kbd className="px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] font-mono text-[10px]">↵</kbd> to send
+          Powered by Llama 3 · <kbd className="px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] font-mono text-[10px]">↵</kbd> to send
         </div>
       </div>
     </div>

@@ -29,7 +29,7 @@ export default function WelcomeScreen({ onSendMessage }) {
             <div className="max-w-2xl w-full space-y-8 fade-in">
                 {/* Welcome Header */}
                 <div className="text-center space-y-3">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--accent-teal)] to-[var(--accent-purple)] mb-4">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--accent-teal)] to-[var(--accent-secondary)] mb-4">
                         <SparklesIcon className="w-8 h-8 text-white" />
                     </div>
 

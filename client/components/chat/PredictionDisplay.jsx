@@ -9,7 +9,8 @@ import {
     ChartBarIcon,
     UserGroupIcon,
     ShieldCheckIcon,
-    BeakerIcon
+    BeakerIcon,
+    ChevronDownIcon
 } from '@heroicons/react/24/outline';
 
 export default function PredictionDisplay({ content }) {
@@ -124,16 +125,14 @@ export default function PredictionDisplay({ content }) {
                             <h4 className="font-semibold text-[var(--text-primary)] flex items-center gap-2">
                                 <span>📊</span> Detailed Step-by-Step Analysis
                             </h4>
-                            <svg className="w-5 h-5 text-[var(--text-secondary)] transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
+                            <ChevronDownIcon className="w-5 h-5 text-[var(--text-secondary)] transition-transform group-open:rotate-180" />
                         </div>
                     </summary>
                     <div className="p-4 pt-0">
                         {/* Parse and render individual steps */}
                         {data.stepByStep.split(/### Step \d+:/).filter(Boolean).map((step, idx) => {
                             const stepIcons = ['👥', '🛡️', '⚗️', '⚖️'];
-                            const stepColors = ['text-blue-500', 'text-amber-500', 'text-purple-500', 'text-emerald-500'];
+                            const stepColors = ['text-blue-500', 'text-amber-500', 'text-[#00ADB5]', 'text-emerald-500'];
                             return (
                                 <div key={idx} className="mb-4 last:mb-0">
                                     <div className="flex items-start gap-3">
@@ -175,9 +174,7 @@ export default function PredictionDisplay({ content }) {
                                     <h5 className="font-semibold text-[var(--text-primary)]">Enrollment</h5>
                                     <p className="text-xs text-[var(--text-tertiary)]">Feasibility Analysis</p>
                                 </div>
-                                <svg className="w-4 h-4 text-[var(--text-secondary)] transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
+                                <ChevronDownIcon className="w-4 h-4 text-[var(--text-secondary)] transition-transform group-open:rotate-180" />
                             </div>
                         </summary>
                         <div className="p-4 pt-2 text-sm prose prose-sm max-w-none text-[var(--text-primary)]">
@@ -201,9 +198,7 @@ export default function PredictionDisplay({ content }) {
                                     <h5 className="font-semibold text-[var(--text-primary)]">Safety</h5>
                                     <p className="text-xs text-[var(--text-tertiary)]">Risk Assessment</p>
                                 </div>
-                                <svg className="w-4 h-4 text-[var(--text-secondary)] transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
+                                <ChevronDownIcon className="w-4 h-4 text-[var(--text-secondary)] transition-transform group-open:rotate-180" />
                             </div>
                         </summary>
                         <div className="p-4 pt-2 text-sm prose prose-sm max-w-none text-[var(--text-primary)]">
@@ -222,14 +217,12 @@ export default function PredictionDisplay({ content }) {
                     >
                         <summary className="cursor-pointer p-4 hover:bg-[var(--bg-secondary)]/30 transition-colors list-none">
                             <div className="flex items-center gap-3">
-                                <BeakerIcon className="w-6 h-6 text-purple-500 flex-shrink-0" />
+                                <BeakerIcon className="w-6 h-6 text-[#00ADB5] flex-shrink-0" />
                                 <div className="flex-1">
                                     <h5 className="font-semibold text-[var(--text-primary)]">Efficacy</h5>
                                     <p className="text-xs text-[var(--text-tertiary)]">Clinical Evidence</p>
                                 </div>
-                                <svg className="w-4 h-4 text-[var(--text-secondary)] transition-transform group-open:rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
+                                <ChevronDownIcon className="w-4 h-4 text-[var(--text-secondary)] transition-transform group-open:rotate-180" />
                             </div>
                         </summary>
                         <div className="p-4 pt-2 text-sm prose prose-sm max-w-none text-[var(--text-primary)]">
