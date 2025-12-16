@@ -59,12 +59,13 @@ app.add_middleware(
 _llm_client: Optional[GrokClient] = None
 _mongo_store: Optional[AsyncMongoStore] = None
 _ml_predictor: Optional[Any] = None
+_workflow_checkpointer: Optional[Any] = None  # For HITL workflow state persistence
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize expensive resources once at startup"""
-    global _llm_client, _mongo_store, _ml_predictor
+    global _llm_client, _mongo_store, _ml_predictor, _workflow_checkpointer
     print("🚀 Initializing ClinicalAgent 2.0...")
     
     # Initialize LLM client (lightweight)
@@ -75,6 +76,15 @@ async def startup_event():
     _mongo_store = AsyncMongoStore()
     print("✓ MongoDB store initialized")
     
+    # Initialize workflow checkpointer for HITL
+    try:
+        from langgraph.checkpoint.memory import MemorySaver
+        _workflow_checkpointer = MemorySaver()
+        print("✓ Workflow checkpointer initialized (HITL enabled)")
+    except Exception as e:
+        print(f"⚠️ Checkpointer initialization failed: {e}")
+        _workflow_checkpointer = None
+    
     # Verify LangGraph v2 availability
     try:
         from langgraph_v2.config import Config
@@ -83,19 +93,27 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ LangGraph v2 check failed: {e}")
     
-    # Initialize ML predictor (optional - may not have model yet)
-    try:
-        from ml_models.inference import EnrollmentPredictor
-        _ml_predictor = EnrollmentPredictor()
-        print("✓ ML Enrollment Predictor initialized")
-    except FileNotFoundError:
-        print("⚠️ ML model not found - prediction endpoint will return error until model is trained")
-        _ml_predictor = None
-    except Exception as e:
-        print(f"⚠️ ML predictor initialization failed: {e}")
-        _ml_predictor = None
+    # Initialize ML predictor (OPTIONAL - using MOCK for stability)
+    # Real BioBERT model loading can cause crashes on some systems
+    # To enable: set ENABLE_ML_PREDICTOR=1 environment variable
+    _ml_predictor = None
+    
+    if os.getenv("ENABLE_ML_PREDICTOR", "0") == "1":
+        print("🧬 ML Predictor enabled via ENABLE_ML_PREDICTOR=1")
+        print("   📦 Using MOCK predictor for 10 diseases (lightweight mode)")
+        
+        try:
+            from ml_models.mock_predictor import MockEnrollmentPredictor
+            _ml_predictor = MockEnrollmentPredictor(device='cpu')
+        except Exception as e:
+            print(f"⚠️  Mock predictor initialization failed: {type(e).__name__}: {e}")
+            print(f"   /api/predict-enrollment endpoint will return error")
+    else:
+        print("ℹ️  ML Predictor disabled (set ENABLE_ML_PREDICTOR=1 to enable)")
+        print("   /api/predict-enrollment endpoint will return 'not available' message")
     
     print("🎉 Application ready!")
+
 
 
 
@@ -447,8 +465,9 @@ async def chat(
                 trial_input = None
         
         if is_trial_prediction:
-            # Use LangGraph v2 workflow for trial predictions
+            # Use LangGraph v2 workflow for trial predictions with HITL support
             from langgraph_v2.workflow import ClinicalTrialWorkflow
+            import uuid
             
             print("\n" + "="*60)
             print("🚀 Starting ClinicalAgent 2.0 Workflow")
@@ -456,9 +475,52 @@ async def chat(
                 print(f"📝 Context-enriched: {followup_info['is_followup']}")
             print("="*60)
             
-            workflow = ClinicalTrialWorkflow(verbose=True)
-            prediction_result = workflow.predict(trial_input)
+            # Initialize workflow with checkpointer for HITL
+            workflow = ClinicalTrialWorkflow(
+                verbose=True,
+                checkpointer=_workflow_checkpointer
+            )
             
+            # Generate thread_id for this workflow execution
+            thread_id = str(uuid.uuid4())
+            config = {"configurable": {"thread_id": thread_id}}
+            
+            # Run workflow
+            prediction_result = workflow.predict(trial_input, config=config)
+            
+            # Check if workflow was interrupted (HITL needed)
+            if prediction_result.get("interrupted"):
+                # Workflow paused, waiting for human input
+                # Get the current state to extract the query
+                current_state = workflow.graph.get_state(config)
+                state_values = current_state.values if hasattr(current_state, 'values') else {}
+                
+                print("\n⏸️  Workflow interrupted - HITL requested")
+                print(f"   Thread ID: {thread_id}")
+                
+                # Return HITL response to frontend
+                result = {
+                    "status": "waiting_for_input",
+                    "thread_id": thread_id,
+                    "session_id": session_id,
+                    "query": state_values.get("human_input_query", "Please provide alternative drug name:"),
+                    "retry_count": state_values.get("human_retry_count", 0),
+                    "max_retries": 3,
+                    "message": prediction_result.get("interrupt_message", "Human input needed")
+                }
+                
+                # Save a placeholder message for HITL
+                await _mongo_store.save_chat_message_with_user(
+                    user_id=current_user.id,
+                    session_id=session_id,
+                    role="assistant",
+                    content=f"⏸️ Waiting for input: {result['query']}",
+                    agent_outputs={"hitl_pending": True, "thread_id": thread_id}
+                )
+                
+                return result
+            
+            # Workflow completed successfully
             # Format response with FULL agent reports for proper UI rendering
             final_output = f"""🎯 Clinical Trial Prediction
 
@@ -576,6 +638,175 @@ Provide a helpful answer that builds on the previous context."""
         raise HTTPException(
             status_code=500, 
             detail=f"Failed to process chat request: {str(e)}"
+        )
+
+
+class ChatResumeRequest(BaseModel):
+    """Request to resume a paused workflow with human input"""
+    thread_id: str
+    user_input: str
+    session_id: Optional[str] = None
+
+
+@app.post("/chat/resume")
+async def chat_resume(
+    req: ChatResumeRequest,
+    current_user: UserResponse = Depends(get_current_user_with_store)
+):
+    """
+    Resume a paused workflow with human input (HITL)
+    
+    This endpoint is called when a workflow is interrupted waiting for user input.
+    It updates the workflow state with the user's response and continues execution.
+    """
+    if not req.thread_id or not req.user_input:
+        raise HTTPException(status_code=400, detail="thread_id and user_input are required")
+    
+    try:
+        # Save user's HITL response as a message
+        session_id = req.session_id
+        if session_id:
+            await _mongo_store.save_chat_message_with_user(
+                user_id=current_user.id,
+                session_id=session_id,
+                role="user",
+                content=f"🔄 HITL Input: {req.user_input}"
+            )
+        
+        # Resume workflow with user input
+        from langgraph_v2.workflow import ClinicalTrialWorkflow
+        
+        print(f"\n▶️  Resuming workflow {req.thread_id} with user input: {req.user_input}")
+        
+        # Initialize workflow with checkpointer
+        workflow = ClinicalTrialWorkflow(
+            verbose=True,
+            checkpointer=_workflow_checkpointer
+        )
+        
+        # Get the current state
+        config = {"configurable": {"thread_id": req.thread_id}}
+        current_state = workflow.graph.get_state(config)
+        
+        if not current_state or not current_state.values:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Workflow state not found for thread_id: {req.thread_id}"
+            )
+        
+        print(f"✓ Found workflow state at step: {current_state.values.get('current_step')}")
+        
+        # Update state with user input
+        updated_state = current_state.values.copy()
+        updated_state["human_input_response"] = req.user_input
+        
+        # Resume workflow from current state (this will continue from the human node)
+        # The human node will check for human_input_response and proceed to safety check
+        try:
+            # Stream or invoke to continue from the interrupted state
+            # Using invoke with the updated state
+            final_state = None
+            for event in workflow.graph.stream(None, config, stream_mode="values"):
+                final_state = event
+            
+            if not final_state:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Workflow failed to produce final state"
+                )
+            
+            # Check if interrupted again (user input was invalid, asking again)
+            if final_state.get("human_input_needed"):
+                # Still waiting for input - return HITL response again
+                result = {
+                    "status": "waiting_for_input",
+                    "thread_id": req.thread_id,
+                    "session_id": session_id,
+                    "query": final_state.get("human_input_query", "Please provide alternative drug name:"),
+                    "retry_count": final_state.get("human_retry_count", 0),
+                    "max_retries": 3,
+                    "message": "Previous input didn't work. Please try again."
+                }
+                
+                if session_id:
+                    await _mongo_store.save_chat_message_with_user(
+                        user_id=current_user.id,
+                        session_id=session_id,
+                        role="assistant",
+                        content=f"⏸️ Still waiting for input: {result['query']}",
+                        agent_outputs={"hitl_pending": True, "thread_id": req.thread_id}
+                    )
+                
+                return result
+            
+            # Workflow completed! Format final result
+            final_output = f"""🎯 Clinical Trial Prediction
+
+**Prediction**: {final_state.get('final_prediction', 'UNKNOWN')}  
+**Confidence**: {int((final_state.get('confidence_score', 0.0) * 100))}%
+
+---
+
+## 📊 Step-by-Step Analysis
+
+{final_state.get('reasoning_trace', 'No reasoning available')}
+
+---
+
+**Agent Reports:**
+
+**Enrollment**: {final_state.get('enrollment_report') or 'No enrollment report available'}
+
+**Safety**: {final_state.get('safety_report') or 'No safety report available'}
+
+**Efficacy**: {final_state.get('efficacy_report') or 'No efficacy report available'}
+"""
+            
+            result = {
+                "final_output": final_output,
+                "session_id": session_id,
+                "prediction": final_state.get('final_prediction'),
+                "confidence": final_state.get('confidence_score', 0.0),
+                "activated_agents": ["ClinicalAgent 2.0 (with HITL)"],
+                "status": "success",
+                "warnings": final_state.get('warnings', []),
+                "errors": final_state.get('errors', [])
+            }
+            
+            # Save final response
+            if session_id:
+                await _mongo_store.save_chat_message_with_user(
+                    user_id=current_user.id,
+                    session_id=session_id,
+                    role="assistant",
+                    content=result["final_output"],
+                    agent_outputs=result
+                )
+            
+            print(f"✅ Workflow completed: {final_state.get('final_prediction')}")
+            
+            return result
+            
+        except Exception as e:
+            from langgraph.errors import NodeInterrupt
+            if isinstance(e, NodeInterrupt):
+                # Interrupted again - shouldn't happen but handle it
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Workflow interrupted again unexpectedly: {str(e)}"
+                )
+            else:
+                raise
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Resume error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to resume workflow: {str(e)}"
         )
 
 

@@ -22,22 +22,26 @@ class ClinicalTrialWorkflow:
         parse_input → enrollment → safety → [human if NOT_FOUND] → efficacy → reasoning → END
     """
     
-    def __init__(self, llm=None, verbose: bool = True):
+    def __init__(self, llm=None, verbose: bool = True, checkpointer=None):
         """
         Initialize the workflow
         
         Args:
             llm: LLM client (defaults to GrokClient)
             verbose: Enable verbose logging
+            checkpointer: LangGraph checkpointer for state persistence (enables HITL)
         """
         self.llm = llm or GrokClient()
         self.verbose = verbose
+        self.checkpointer = checkpointer
         self.tools = get_tools(verbose=verbose)
         self.graph = self._build_graph()
         
         if verbose:
             print("\n" + "="*60)
             print("🤖 ClinicalAgent 2.0 - LangGraph Workflow Initialized")
+            if checkpointer:
+                print("   ✓ Checkpointer enabled (HITL supported)")
             print("="*60)
             Config.print_status()
     
@@ -79,7 +83,11 @@ class ClinicalTrialWorkflow:
         workflow.add_edge("efficacy", "reasoning")
         workflow.add_edge("reasoning", END)
         
-        return workflow.compile()
+        # Compile with checkpointer if provided
+        if self.checkpointer:
+            return workflow.compile(checkpointer=self.checkpointer)
+        else:
+            return workflow.compile()
     
     # ======================== NODE IMPLEMENTATIONS ========================
     
@@ -355,32 +363,45 @@ Provide a brief efficacy assessment (3-4 sentences) for {drug_name} in treating 
     
     def human_node(self, state: ClinicalTrialState) -> ClinicalTrialState:
         """
-        Node 5: Human-in-the-Loop (Disabled for Web API)
+        Node 5: Human-in-the-Loop
         
-        NOTE: Console-based input() doesn't work with web APIs.
-        Instead of blocking, we immediately return and let the workflow proceed
-        with the information we have.
+        This node pauses the workflow and waits for user input via the API.
+        The workflow will interrupt here, and the API will return the query to the frontend.
+        When the user provides input via /chat/resume, the workflow continues from here.
         """
         if self.verbose:
             print("\n" + "="*60)
-            print("👤 HUMAN-IN-THE-LOOP (SKIPPED - Web API)")
+            print("👤 HUMAN-IN-THE-LOOP - Waiting for User Input")
             print("="*60)
         
         query = state.get("human_input_query", "")
         
+        # Check if we already have user input (from resume)
+        if state.get("human_input_response"):
+            if self.verbose:
+                print(f"\n✅ Received user input: {state['human_input_response']}")
+            
+            # Clear the input flag so we proceed to safety check with new drug name
+            state["human_input_needed"] = False
+            state["current_step"] = "human_input_received"
+            return state
+        
+        # No user input yet - this is the first time hitting this node
+        # Use LangGraph's interrupt to pause execution
+        from langgraph.errors import NodeInterrupt
+        
         if self.verbose:
-            print(f"\nℹ️  Would have asked: {query}")
-            print("   Proceeding with available information instead...")
+            print(f"\n⏸️  PAUSING workflow - waiting for user input")
+            print(f"   Question: {query}")
         
-        # Don't wait for input - just mark that we tried and proceed
-        state["human_input_needed"] = False
+        state["current_step"] = "waiting_for_human_input"
         state["human_retry_count"] += 1
-        state["current_step"] = "human_input_skipped"
         
-        # Add a warning that we couldn't get alternate drug name
-        state["warnings"].append(f"Drug synonyms not available - proceeding with limited safety data")
-        
-        return state
+        # Raise interrupt - this will pause the workflow and return control to the API
+        # The state will be checkpointed at this point
+        raise NodeInterrupt(
+            f"Human input requested: {query}"
+        )
     
     def reasoning_node(self, state: ClinicalTrialState) -> ClinicalTrialState:
         """
@@ -524,13 +545,20 @@ Provide your analysis in this **EXACT** structure:
     
     def should_request_human_input(self, state: ClinicalTrialState) -> Literal["human", "efficacy"]:
         """
-        Conditional edge: Skip human node for web API
+        Conditional edge: Route to human node if input is needed
         
-        Since console input() doesn't work in web APIs, we always proceed to efficacy
-        even if the drug wasn't found in FDA database.
+        Checks if the safety check failed due to drug not found and HITL is needed.
+        The workflow will pause (interrupt) at the human node, waiting for user input.
         """
-        # Always skip human input for web API compatibility
-        return "efficacy"
+        # Check if human input is needed (drug not found, retry count not exceeded)
+        if state.get("human_input_needed", False):
+            if self.verbose:
+                print(f"\n🔀 Routing to HUMAN node (retry {state.get('human_retry_count', 0) + 1})")
+            return "human"
+        else:
+            if self.verbose:
+                print(f"\n🔀 Routing to EFFICACY node")
+            return "efficacy"
     
     # ======================== HELPER METHODS ========================
     
@@ -562,12 +590,13 @@ Provide your analysis in this **EXACT** structure:
     
     # ======================== PUBLIC API ========================
     
-    def predict(self, raw_input: str) -> dict:
+    def predict(self, raw_input: str, config: dict = None) -> dict:
         """
         Main entry point: predict clinical trial outcome
         
         Args:
             raw_input: Numbered format input string
+            config: Optional config dict with thread_id for resuming interrupted workflows
             
         Returns:
             {
@@ -580,33 +609,53 @@ Provide your analysis in this **EXACT** structure:
                     "efficacy": str
                 },
                 "warnings": list,
-                "errors": list
+                "errors": list,
+                "interrupted": bool (True if HITL needed),
+                "thread_id": str (for resuming)
             }
         """
         # Create initial state
         initial_state = create_initial_state(raw_input)
         
-        # Run the workflow
-        final_state = self.graph.invoke(initial_state)
-        
-        # Format output
-        return {
-            "prediction": final_state.get("final_prediction", "ERROR"),
-            "confidence": final_state.get("confidence_score", 0.0),
-            "reasoning": final_state.get("reasoning_trace", "No reasoning available"),
-            "reports": {
-                "enrollment": final_state.get("enrollment_report"),
-                "safety": final_state.get("safety_report"),
-                "efficacy": final_state.get("efficacy_report")
-            },
-            "drug_parsed": {
-                "original": final_state.get("drug_name"),
-                "cleaned": final_state.get("drug_name_cleaned")
-            },
-            "disease_parsed": final_state.get("disease_name"),
-            "warnings": final_state.get("warnings", []),
-            "errors": final_state.get("errors", [])
-        }
+        # Run the workflow with config (for thread_id support)
+        try:
+            if config:
+                final_state = self.graph.invoke(initial_state, config)
+            else:
+                final_state = self.graph.invoke(initial_state)
+            
+            # Format output
+            return {
+                "prediction": final_state.get("final_prediction", "ERROR"),
+                "confidence": final_state.get("confidence_score", 0.0),
+                "reasoning": final_state.get("reasoning_trace", "No reasoning available"),
+                "reports": {
+                    "enrollment": final_state.get("enrollment_report"),
+                    "safety": final_state.get("safety_report"),
+                    "efficacy": final_state.get("efficacy_report")
+                },
+                "drug_parsed": {
+                    "original": final_state.get("drug_name"),
+                    "cleaned": final_state.get("drug_name_cleaned")
+                },
+                "disease_parsed": final_state.get("disease_name"),
+                "warnings": final_state.get("warnings", []),
+                "errors": final_state.get("errors", []),
+                "interrupted": False
+            }
+        except Exception as e:
+            # Check if this is a NodeInterrupt (HITL triggered)
+            from langgraph.errors import NodeInterrupt
+            if isinstance(e, NodeInterrupt):
+                # Workflow is paused, waiting for human input
+                return {
+                    "interrupted": True,
+                    "interrupt_message": str(e),
+                    "status": "waiting_for_input"
+                }
+            else:
+                # Actual error
+                raise
 
 
 # Convenience function

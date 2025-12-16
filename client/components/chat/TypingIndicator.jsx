@@ -24,7 +24,7 @@ export default function TypingIndicator() {
             <span className="text-sm text-[var(--text-secondary)] ml-1">Thinking...</span>
           </div>
         </div>
-        
+
         {/* Shimmer loader underneath */}
         <div className="mt-2 h-0.5 w-28 rounded-full overflow-hidden bg-[var(--bg-secondary)]">
           <div className="h-full shimmer bg-[var(--accent-teal)]"></div>

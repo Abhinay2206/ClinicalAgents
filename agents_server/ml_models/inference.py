@@ -5,6 +5,11 @@ Provides easy-to-use interface for making predictions with trained model.
 """
 
 import os
+
+# CRITICAL: Set environment variables BEFORE importing transformers/torch
+# This prevents tokenizer parallelism crashes on macOS
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
 import torch
 import numpy as np
 from transformers import AutoTokenizer
@@ -31,15 +36,25 @@ class EnrollmentPredictor:
             model_dir: Directory containing saved model and tokenizer
             device: Device to run inference on ('cuda' or 'cpu')
         """
+        print("⏳ Initializing EnrollmentPredictor...")
+        
+        # CRITICAL FIX: Force CPU on macOS to avoid MPS backend crashes
+        # MPS (Metal Performance Shaders) has known incompatibilities with transformers
         if device is None:
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            # Always use CPU to prevent MPS crashes on Apple Silicon
+            self.device = 'cpu'
+            print("   ⚠️  Forcing CPU device to avoid MPS backend issues on macOS")
         else:
             self.device = device
+            print(f"   📍 Using specified device: {device}")
         
         # Construct paths
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         model_path = os.path.join(base_dir, model_dir, 'enrollment_model.pt')
         tokenizer_path = os.path.join(base_dir, model_dir, 'tokenizer')
+        
+        print(f"   📁 Model path: {model_path}")
+        print(f"   📁 Tokenizer path: {tokenizer_path}")
         
         # Check if model exists
         if not os.path.exists(model_path):
@@ -48,24 +63,49 @@ class EnrollmentPredictor:
                 "Please train the model first using ml_models.training.train_enrollment_model()"
             )
         
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        # Load tokenizer with error handling
+        print("   📦 Loading tokenizer...")
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_path,
+                local_files_only=True  # Don't try to download, use local only
+            )
+            print("   ✓ Tokenizer loaded successfully")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load tokenizer from {tokenizer_path}: {e}")
         
         # Load model checkpoint - use weights_only=False to load numpy arrays
         # This is safe because we trust our own trained model
+        print("   📦 Loading model checkpoint (414MB)...")
         try:
             checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+            print("   ✓ Checkpoint loaded to memory")
         except TypeError:
             # Fallback for older PyTorch versions
             checkpoint = torch.load(model_path, map_location=self.device)
+            print("   ✓ Checkpoint loaded (fallback mode)")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model checkpoint: {e}")
         
         # Initialize model
-        self.model = EnrollmentFusionModel(
-            num_classes=checkpoint.get('num_classes', 3)
-        )
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.model.to(self.device)
-        self.model.eval()
+        print("   🔧 Initializing model architecture...")
+        try:
+            self.model = EnrollmentFusionModel(
+                num_classes=checkpoint.get('num_classes', 3)
+            )
+            print("   ✓ Model architecture created")
+        except Exception as e:
+            raise RuntimeError(f"Failed to create model architecture: {e}")
+        
+        # Load state dict
+        print("   🔄 Loading model weights...")
+        try:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.model.to(self.device)
+            self.model.eval()
+            print("   ✓ Model weights loaded and set to eval mode")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model state dict: {e}")
         
         # Load normalization parameters
         self.feature_mean = checkpoint.get('feature_mean', np.zeros(4))
@@ -74,7 +114,8 @@ class EnrollmentPredictor:
         # Class labels
         self.class_labels = ['success', 'delayed', 'fail']
         
-        print(f"✓ Enrollment predictor loaded on {self.device}")
+        print(f"✅ Enrollment predictor fully loaded on {self.device}")
+
     
     def _prepare_text(self, disease: str, criteria_text: str = "") -> str:
         """

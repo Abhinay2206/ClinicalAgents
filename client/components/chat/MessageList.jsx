@@ -21,9 +21,9 @@ export default function MessageList({ messages, isLoading }) {
         {messages.map((message, index) => (
           <MessageBubble key={message.id || index} message={message} />
         ))}
-        
+
         {isLoading && <TypingIndicator />}
-        
+
         <div ref={messagesEndRef} />
       </div>
     </div>
