@@ -11,13 +11,14 @@ from dotenv import load_dotenv
 
 from llm_client import GrokClient
 from storage.mongo_async import AsyncMongoStore
-from models import UserRegister, UserLogin, TokenResponse, UserResponse, SessionCreate, SessionResponse
+from models import UserRegister, UserLogin, TokenResponse, UserResponse, SessionCreate, SessionResponse, GoogleAuthRequest
 from auth import (
     get_password_hash, 
     verify_password, 
     create_user_token, 
     get_current_user,
-    security
+    security,
+    verify_google_token
 )
 from fastapi.security import HTTPAuthorizationCredentials
 
@@ -223,6 +224,80 @@ async def login(credentials: UserLogin):
 async def get_me(current_user: UserResponse = Depends(get_current_user_with_store)):
     """Get current user profile"""
     return current_user
+
+
+@app.post("/auth/google", response_model=TokenResponse)
+async def google_auth(auth_data: GoogleAuthRequest):
+    """
+    Authenticate with Google OAuth
+    
+    Accepts a Google ID token from the frontend, verifies it,
+    and either creates a new user or logs in an existing user.
+    """
+    try:
+        # Verify Google token and extract user info
+        user_info = await verify_google_token(auth_data.credential)
+        
+        email = user_info["email"]
+        name = user_info["name"]
+        picture = user_info.get("picture")
+        google_id = user_info["sub"]
+        
+        # Check if user exists with this Google account
+        existing_user = await _mongo_store.get_user_by_oauth("google", google_id)
+        
+        if existing_user:
+            # User exists with OAuth - log them in
+            user = existing_user
+        else:
+            # Check if user exists with this email (email/password account)
+            email_user = await _mongo_store.get_user_by_email(email)
+            
+            if email_user:
+                # Link OAuth to existing email account
+                await _mongo_store.update_user_oauth_info(
+                    user_id=email_user["id"],
+                    oauth_provider="google",
+                    oauth_id=google_id,
+                    picture=picture
+                )
+                user = await _mongo_store.get_user_by_id(email_user["id"])
+            else:
+                # Create new user with OAuth
+                user = await _mongo_store.create_oauth_user(
+                    email=email,
+                    name=name,
+                    oauth_provider="google",
+                    oauth_id=google_id,
+                    picture=picture
+                )
+        
+        # Create JWT access token
+        access_token = create_user_token(user)
+        
+        # Return token and user info
+        return TokenResponse(
+            access_token=access_token,
+            user=UserResponse(
+                id=user["id"],
+                email=user["email"],
+                name=user["name"],
+                created_at=user["created_at"],
+                is_active=user.get("is_active", True)
+            )
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Google OAuth error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to authenticate with Google: {str(e)}"
+        )
+
 
 
 # ---------- Session Management Endpoints ----------

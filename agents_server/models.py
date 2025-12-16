@@ -55,3 +55,15 @@ class SessionResponse(BaseModel):
     title: str
     created_at: str
     updated_at: str
+
+
+# Google OAuth Models
+class GoogleAuthRequest(BaseModel):
+    """Request model for Google OAuth authentication"""
+    credential: str  # Google ID token from frontend
+    
+
+class GoogleAuthResponse(BaseModel):
+    """Response model for Google OAuth authentication"""
+    access_token: str
+    user: UserResponse

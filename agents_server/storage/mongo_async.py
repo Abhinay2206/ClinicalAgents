@@ -251,6 +251,80 @@ class AsyncMongoStore:
             user["_id"] = str(user["_id"])
         return user
 
+    # OAuth user methods
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def get_user_by_oauth(self, oauth_provider: str, oauth_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by OAuth provider and ID"""
+        if not await self._ensure_connected():
+            return None
+        assert self._db is not None
+        
+        user = await self._db["users"].find_one({
+            "oauth_provider": oauth_provider,
+            "oauth_id": oauth_id
+        })
+        if user and "_id" in user:
+            user["_id"] = str(user["_id"])
+        return user
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def create_oauth_user(
+        self,
+        email: str,
+        name: str,
+        oauth_provider: str,
+        oauth_id: str,
+        picture: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create a new user with OAuth credentials"""
+        if not await self._ensure_connected():
+            raise Exception("MongoDB unavailable")
+        assert self._db is not None
+        
+        from bson import ObjectId
+        user_id = str(ObjectId())
+        
+        doc = {
+            "id": user_id,
+            "email": email,
+            "name": name,
+            "oauth_provider": oauth_provider,
+            "oauth_id": oauth_id,
+            "picture": picture,
+            "hashed_password": None,  # No password for OAuth users
+            "created_at": dt.datetime.utcnow().isoformat(),
+            "is_active": True,
+        }
+        await self._db["users"].insert_one(doc)
+        return doc
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
+    async def update_user_oauth_info(
+        self,
+        user_id: str,
+        oauth_provider: str,
+        oauth_id: str,
+        picture: Optional[str] = None
+    ) -> bool:
+        """Link OAuth credentials to an existing user account"""
+        if not await self._ensure_connected():
+            return False
+        assert self._db is not None
+        
+        update_doc = {
+            "oauth_provider": oauth_provider,
+            "oauth_id": oauth_id,
+        }
+        if picture:
+            update_doc["picture"] = picture
+        
+        result = await self._db["users"].update_one(
+            {"id": user_id},
+            {"$set": update_doc}
+        )
+        return result.modified_count > 0
+
+
     # ---------- Session Management ----------
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=0.5, max=4), reraise=True)
     async def create_session(self, user_id: str, title: str = "New Chat") -> Dict[str, Any]:

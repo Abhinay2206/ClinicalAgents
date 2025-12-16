@@ -133,3 +133,84 @@ def create_user_token(user: dict) -> str:
         data={"sub": user["id"], "email": user["email"]}
     )
     return access_token
+
+
+async def verify_google_token(credential: str) -> dict:
+    """
+    Verify Google OAuth ID token and extract user information.
+    
+    Args:
+        credential: Google ID token from frontend
+        
+    Returns:
+        dict with user info: email, name, picture, sub (Google user ID)
+        
+    Raises:
+        HTTPException if token is invalid
+    """
+    try:
+        import httpx
+        from jose import jwt
+        
+        # Get Google's public keys
+        async with httpx.AsyncClient() as client:
+            # First decode without verification to get kid (key id)
+            unverified_header = jwt.get_unverified_header(credential)
+            
+            # Get Google's public keys
+            keys_response = await client.get("https://www.googleapis.com/oauth2/v3/certs")
+            keys = keys_response.json()["keys"]
+            
+            # Find the right key
+            key = None
+            for k in keys:
+                if k["kid"] == unverified_header["kid"]:
+                    key = k
+                    break
+            
+            if not key:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token: key not found"
+                )
+            
+            # Verify and decode the token
+            # Google ID tokens are JWTs signed with RS256
+            from jose.backends import RSAKey
+            rsa_key = RSAKey(key, algorithm="RS256")
+            
+            # Decode and verify
+            payload = jwt.decode(
+                credential,
+                rsa_key,
+                algorithms=["RS256"],
+                audience=os.getenv("GOOGLE_CLIENT_ID")
+            )
+            
+            # Extract user info
+            user_info = {
+                "email": payload.get("email"),
+                "name": payload.get("name"),
+                "picture": payload.get("picture"),
+                "sub": payload.get("sub"),  # Google user ID
+                "email_verified": payload.get("email_verified", False)
+            }
+            
+            # Ensure email is verified
+            if not user_info["email_verified"]:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Email not verified by Google"
+                )
+            
+            return user_info
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Google token verification error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Failed to verify Google token: {str(e)}"
+        )
+

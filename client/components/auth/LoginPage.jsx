@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { motion } from 'framer-motion';
+import { GoogleLogin } from '@react-oauth/google';
 
 export default function LoginPage() {
     const [email, setEmail] = useState('');
@@ -12,7 +13,7 @@ export default function LoginPage() {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const router = useRouter();
-    const { login } = useAuth();
+    const { login, loginWithGoogle } = useAuth();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -27,6 +28,24 @@ export default function LoginPage() {
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleGoogleSuccess = async (credentialResponse) => {
+        setError('');
+        setIsLoading(true);
+
+        try {
+            await loginWithGoogle(credentialResponse.credential);
+            router.push('/chat');
+        } catch (err) {
+            setError(err.message || 'Failed to authenticate with Google');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleGoogleError = () => {
+        setError('Google authentication was cancelled or failed');
     };
 
     return (
@@ -151,6 +170,26 @@ export default function LoginPage() {
                             )}
                         </motion.button>
                     </form>
+
+                    {/* Divider */}
+                    <div className="my-6 flex items-center">
+                        <div className="flex-grow border-t border-[var(--accent-teal)]/20"></div>
+                        <span className="px-4 text-sm text-[var(--text-secondary)]">or</span>
+                        <div className="flex-grow border-t border-[var(--accent-teal)]/20"></div>
+                    </div>
+
+                    {/* Google OAuth Button */}
+                    <div className="flex justify-center">
+                        <GoogleLogin
+                            onSuccess={handleGoogleSuccess}
+                            onError={handleGoogleError}
+                            useOneTap={false}
+                            theme="filled_black"
+                            size="large"
+                            text="signin_with"
+                            shape="rectangular"
+                        />
+                    </div>
 
                     {/* Register Link */}
                     <div className="mt-6 text-center">

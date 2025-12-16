@@ -68,6 +68,17 @@ export function AuthProvider({ children }) {
         setIsAuthenticated(false);
     };
 
+    const loginWithGoogle = async (credential) => {
+        try {
+            const { user: loggedInUser } = await authService.loginWithGoogle(credential);
+            setUser(loggedInUser);
+            setIsAuthenticated(true);
+            return loggedInUser;
+        } catch (error) {
+            throw error;
+        }
+    };
+
     const value = {
         user,
         isAuthenticated,
@@ -75,6 +86,7 @@ export function AuthProvider({ children }) {
         register,
         login,
         logout,
+        loginWithGoogle,
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

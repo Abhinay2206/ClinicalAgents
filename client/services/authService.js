@@ -143,6 +143,32 @@ class AuthService {
     isAuthenticated() {
         return !!this.getToken();
     }
+
+    // Login with Google OAuth
+    async loginWithGoogle(credential) {
+        try {
+            const response = await axios.post(`${API_BASE_URL}/auth/google`, {
+                credential,
+            });
+
+            const { access_token, user } = response.data;
+
+            // Store token and user
+            this.setToken(access_token);
+            this.setUser(user);
+
+            return { token: access_token, user };
+        } catch (error) {
+            console.error('Google OAuth error:', error);
+
+            if (error.response?.data?.detail) {
+                throw new Error(error.response.data.detail);
+            }
+
+            throw new Error(error.message || 'Failed to authenticate with Google. Please try again.');
+        }
+    }
 }
 
 export const authService = new AuthService();
+

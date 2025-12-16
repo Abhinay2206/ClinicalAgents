@@ -22,3 +22,5 @@ python-multipart
 langgraph>=0.0.30
 langchain-core>=0.1.0
 typing-extensions>=4.5.0
+authlib
+httpx
